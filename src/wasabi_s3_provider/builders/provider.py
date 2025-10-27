@@ -76,8 +76,8 @@ def create_provider_from_spec(
         raise ValueError("endpoint and region are required")
 
     # Create provider based on type
-    provider_type = spec.get("type", "custom")
-    if provider_type in ("wasabi", "aws", "custom"):
+    provider_type = spec.get("type", "wasabi")
+    if provider_type == "wasabi":
         return AWSProvider(
             endpoint=endpoint,
             region=region,
@@ -90,5 +90,5 @@ def create_provider_from_spec(
             iam_region=iam_region,
         )
     else:
-        raise ValueError(f"Unsupported provider type: {provider_type}")
+        raise ValueError(f"Unsupported provider type: {provider_type}. Only 'wasabi' is supported.")
 

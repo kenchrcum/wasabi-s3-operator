@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-# Quick deployment script for S3 Operator
+# Quick deployment script for Wasabi S3 Provider
 
-NAMESPACE="s3-operator-system"
-IMAGE_NAME="kenchrcum/s3-provider-operator"
+NAMESPACE="wasabi-s3-provider-system"
+IMAGE_NAME="kenchrcum/wasabi-s3-provider"
 VERSION="${1:-latest}"
 
-echo "🚀 Deploying S3 Operator..."
+echo "🚀 Deploying Wasabi S3 Provider..."
 echo ""
 
 # Step 1: Build image
@@ -30,7 +30,7 @@ echo ""
 
 # Step 3: Install operator
 echo "🔧 Installing operator..."
-helm install s3-operator ./helm/s3-operator \
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
   --namespace "${NAMESPACE}" \
   --create-namespace \
   --set image.repository="${IMAGE_NAME}" \
@@ -47,10 +47,10 @@ kubectl get pods -n "${NAMESPACE}"
 kubectl get crd | grep s3.cloud37.dev
 
 echo ""
-echo "🎉 S3 Operator is ready!"
+echo "🎉 Wasabi S3 Provider is ready!"
 echo ""
 echo "Next steps:"
 echo "  1. Create a Provider: kubectl apply -f examples/provider-wasabi.yaml"
 echo "  2. Create a Bucket: kubectl apply -f examples/bucket-basic.yaml"
-echo "  3. Check logs: kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=s3-operator"
+echo "  3. Check logs: kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=wasabi-s3-provider"
 

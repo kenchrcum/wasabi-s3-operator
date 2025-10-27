@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Build and push Docker image for S3 Operator
+# Build and push Docker image for Wasabi S3 Provider
 
-IMAGE_NAME="kenchrcum/s3-provider-operator"
+IMAGE_NAME="kenchrcum/wasabi-s3-provider"
 VERSION="${1:-latest}"
 
 echo "Building Docker image: ${IMAGE_NAME}:${VERSION}"

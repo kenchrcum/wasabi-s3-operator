@@ -82,11 +82,11 @@ All core CRDs are implemented, tested, and packaged for deployment. The operator
 
 ```bash
 # Build and deploy
-docker build -t kenchrcum/s3-provider-operator:latest .
-helm install s3-operator ./helm/s3-operator \
-  --namespace s3-operator-system \
+docker build -t kenchrcum/wasabi-s3-provider:latest .
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
+  --namespace wasabi-s3-provider-system \
   --create-namespace \
-  --set image.repository=kenchrcum/s3-provider-operator
+  --set image.repository=kenchrcum/wasabi-s3-provider
 ```
 
 ## 🔄 Next Development Priorities
@@ -159,13 +159,13 @@ helm install s3-operator ./helm/s3-operator \
 ## 🏗️ Project Structure
 
 ```
-s3-operator/
-├── src/s3_operator/          # Operator code (18 Python files)
+wasabi-s3-provider/
+├── src/wasabi_s3_provider/          # Operator code (18 Python files)
 │   ├── main.py               # All CRD handlers
 │   ├── builders/             # Resource builders
 │   ├── services/             # S3 provider implementations
 │   └── utils/               # Utilities
-├── helm/s3-operator/         # Helm chart (15 files)
+├── helm/wasabi-s3-provider/         # Helm chart (15 files)
 │   ├── templates/crds/       # CRD definitions
 │   └── templates/           # K8s resources
 ├── tests/                    # Unit tests (12 tests)

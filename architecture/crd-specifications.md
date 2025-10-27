@@ -24,7 +24,7 @@ All CRDs follow Kubernetes condition patterns:
 - Finalizers ensure proper cleanup of provider resources
 
 ### Labels
-- `s3.cloud37.dev/managed-by: s3-operator`
+- `s3.cloud37.dev/managed-by: wasabi-s3-provider`
 - `s3.cloud37.dev/provider-name: <provider-name>`
 - Custom labels from spec propagated to owned resources
 

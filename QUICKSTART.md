@@ -1,6 +1,6 @@
-# S3 Operator Quick Start
+# Wasabi S3 Provider Quick Start
 
-Get the S3 Provider Operator up and running in minutes!
+Get the Wasabi S3 Provider Operator up and running in minutes!
 
 ## Prerequisites
 
@@ -22,19 +22,19 @@ Get the S3 Provider Operator up and running in minutes!
 
 ```bash
 # 1. Build the image
-docker build -t kenchrcum/s3-provider-operator:latest .
+docker build -t kenchrcum/wasabi-s3-provider:latest .
 
 # 2. Push to registry (optional)
-docker push kenchrcum/s3-provider-operator:latest
+docker push kenchrcum/wasabi-s3-provider:latest
 
 # 3. Install with Helm
-helm install s3-operator ./helm/s3-operator \
-  --namespace s3-operator-system \
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
+  --namespace wasabi-s3-provider-system \
   --create-namespace \
-  --set image.repository=kenchrcum/s3-provider-operator
+  --set image.repository=kenchrcum/wasabi-s3-provider
 
 # 4. Verify
-kubectl get pods -n s3-operator-system
+kubectl get pods -n wasabi-s3-provider-system
 ```
 
 ## Create Your First Resources
@@ -88,7 +88,7 @@ kubectl get secret application-key-credentials -o jsonpath='{.data.access-key-id
 watch kubectl get providers,buckets,bucketpolicies,accesskeys
 
 # Check operator logs
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator -f
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider -f
 
 # View events
 kubectl get events --sort-by='.lastTimestamp'
@@ -99,7 +99,7 @@ kubectl get events --sort-by='.lastTimestamp'
 ### Operator Not Running
 
 ```bash
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider
 ```
 
 ### Provider Not Ready
@@ -122,7 +122,7 @@ kubectl get events --field-selector involvedObject.kind=Bucket
 kubectl delete -f examples/
 
 # Uninstall operator
-helm uninstall s3-operator --namespace s3-operator-system
+helm uninstall wasabi-s3-provider --namespace wasabi-s3-provider-system
 ```
 
 ## Next Steps

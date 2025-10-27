@@ -1,7 +1,7 @@
 [project]
-name = "s3-operator"
+name = "wasabi-s3-provider"
 version = "0.1.0"
-description = "Kubernetes operator for managing S3-compatible storage providers"
+description = "Kubernetes operator for managing Wasabi S3 storage"
 requires-python = ">=3.14"
 license = { text = "Unlicense" }
 readme = ""  # intentionally omitted to avoid generating docs automatically
@@ -68,7 +68,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["s3_operator*"]
+include = ["wasabi_s3_provider*"]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }

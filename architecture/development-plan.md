@@ -19,7 +19,7 @@ This document defines a step-by-step plan to build a Kubernetes Operator for man
 - CRDs are structural with defaults, validation, and `status` subresource enabled
 - Use Conditions with `type`, `status`, `reason`, `message`, `lastTransitionTime`
 - Use OwnerReferences for derived resources; use Finalizers for cleanup
-- Server-Side Apply with a single field manager (e.g., `s3-operator`) to manage owned fields
+- Server-Side Apply with a single field manager (e.g., `wasabi-s3-provider`) to manage owned fields
 
 ## Phase 2: CRDs (Custom Resource Definitions)
 
@@ -280,10 +280,10 @@ Operations:
 
 #### 6.3 Metrics
 Prometheus metrics:
-- `s3_operator_reconcile_total{kind,result}`
-- `s3_operator_reconcile_duration_seconds{kind}`
-- `s3_operator_bucket_operations_total{operation,result}`
-- `s3_operator_provider_connectivity{provider}`
+- `wasabi_s3_provider_reconcile_total{kind,result}`
+- `wasabi_s3_provider_reconcile_duration_seconds{kind}`
+- `wasabi_s3_provider_bucket_operations_total{operation,result}`
+- `wasabi_s3_provider_provider_connectivity{provider}`
 
 #### 6.4 Status Conditions
 Conditions for all CRDs:

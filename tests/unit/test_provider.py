@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from s3_operator.services.aws.client import AWSProvider
+from wasabi_s3_provider.services.aws.client import AWSProvider
 
 
 class TestAWSProvider:

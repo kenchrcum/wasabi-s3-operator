@@ -1,6 +1,6 @@
-# S3 Operator Deployment Guide
+# Wasabi S3 Provider Deployment Guide
 
-This guide walks you through building and deploying the S3 Provider Operator to a Kubernetes cluster.
+This guide walks you through building and deploying the Wasabi S3 Provider Operator to a Kubernetes cluster.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ Build the operator Docker image:
 
 ```bash
 # Build the image
-docker build -t kenchrcum/s3-provider-operator:latest .
+docker build -t kenchrcum/wasabi-s3-provider:latest .
 
 # Or use the build script
 ./scripts/build-and-push.sh latest
@@ -31,7 +31,7 @@ Push the image to Docker Hub (or your preferred registry):
 docker login
 
 # Push the image
-docker push kenchrcum/s3-provider-operator:latest
+docker push kenchrcum/wasabi-s3-provider:latest
 ```
 
 ## Step 3: Install the Operator
@@ -40,12 +40,12 @@ Install the operator using Helm:
 
 ```bash
 # Create namespace
-kubectl create namespace s3-operator-system
+kubectl create namespace wasabi-s3-provider-system
 
 # Install the operator
-helm install s3-provider-operator ./helm/s3-operator \
-  --namespace s3-provider-operator \
-  --set image.repository=kenchrcum/s3-provider-operator \
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
+  --namespace wasabi-s3-provider-system \
+  --set image.repository=kenchrcum/wasabi-s3-provider \
   --set image.tag=latest
 ```
 
@@ -55,7 +55,7 @@ Create a `my-values.yaml` file:
 
 ```yaml
 image:
-  repository: kenchrcum/s3-provider-operator
+  repository: kenchrcum/wasabi-s3-provider
   tag: "latest"
 
 operator:
@@ -74,8 +74,8 @@ resources:
 Then install:
 
 ```bash
-helm install s3-operator ./helm/s3-operator \
-  --namespace s3-operator-system \
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
+  --namespace wasabi-s3-provider-system \
   -f my-values.yaml
 ```
 
@@ -85,16 +85,16 @@ Check that the operator is running:
 
 ```bash
 # Check deployment
-kubectl get deployment -n s3-operator-system
+kubectl get deployment -n wasabi-s3-provider-system
 
 # Check pods
-kubectl get pods -n s3-operator-system
+kubectl get pods -n wasabi-s3-provider-system
 
 # Check CRDs
 kubectl get crd | grep s3.cloud37.dev
 
 # Check logs
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator --tail=50
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider --tail=50
 ```
 
 Expected output should show:
@@ -166,17 +166,17 @@ kubectl get bucketpolicy -n default
 
 ```bash
 # Follow logs
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator -f
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider -f
 
 # Check specific resource logs
-kubectl logs -n s3-operator-system deployment/s3-operator
+kubectl logs -n wasabi-s3-provider-system deployment/wasabi-s3-provider
 ```
 
 ### View Events
 
 ```bash
 # Operator events
-kubectl get events -n s3-operator-system --sort-by='.lastTimestamp'
+kubectl get events -n wasabi-s3-provider-system --sort-by='.lastTimestamp'
 
 # Resource events
 kubectl get events -n default --field-selector involvedObject.kind=Provider
@@ -196,10 +196,10 @@ http://<operator-service>:8080/metrics
 
 ```bash
 # Check pod status
-kubectl describe pod -n s3-operator-system -l app.kubernetes.io/name=s3-operator
+kubectl describe pod -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider
 
 # Check logs
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider
 ```
 
 ### Provider Not Ready
@@ -209,7 +209,7 @@ kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator
 kubectl get provider wasabi-us-east-1 -n default -o yaml
 
 # Check for authentication errors
-kubectl logs -n s3-operator-system -l app.kubernetes.io/name=s3-operator | grep -i auth
+kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider | grep -i auth
 ```
 
 ### Bucket Creation Failing
@@ -226,10 +226,10 @@ kubectl get events -n default --field-selector involvedObject.kind=Bucket
 
 ```bash
 # Check ClusterRoleBinding
-kubectl get clusterrolebinding | grep s3-operator
+kubectl get clusterrolebinding | grep wasabi-s3-provider
 
 # Check ServiceAccount
-kubectl get serviceaccount -n s3-operator-system
+kubectl get serviceaccount -n wasabi-s3-provider-system
 ```
 
 ## Uninstallation
@@ -238,10 +238,10 @@ To remove the operator:
 
 ```bash
 # Uninstall Helm release
-helm uninstall s3-operator --namespace s3-operator-system
+helm uninstall wasabi-s3-provider --namespace wasabi-s3-provider-system
 
 # Delete namespace
-kubectl delete namespace s3-operator-system
+kubectl delete namespace wasabi-s3-provider-system
 
 # Optional: Delete CRDs (this will delete all custom resources)
 kubectl delete crd providers.s3.cloud37.dev buckets.s3.cloud37.dev bucketpolicies.s3.cloud37.dev accesskeys.s3.cloud37.dev
@@ -254,7 +254,7 @@ For local development with kubectl proxy:
 ```bash
 # Run operator locally
 source .venv/bin/activate
-python -m s3_operator.main
+python -m wasabi_s3_provider.main
 
 # In another terminal, proxy to cluster
 kubectl proxy

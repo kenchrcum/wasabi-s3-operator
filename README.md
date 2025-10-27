@@ -1,18 +1,18 @@
-# S3 Provider Operator
+# Wasabi S3 Provider Operator
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
 [![License](https://img.shields.io/badge/license-Unlicense-lightgrey.svg)](LICENSE)
 
-A Kubernetes operator for managing S3-compatible storage providers (Wasabi, AWS S3, MinIO, etc.) using the [Kopf](https://kopf.readthedocs.io) framework. Built with security, observability, and operational simplicity as core principles.
+A Kubernetes operator for managing Wasabi S3 storage using the [Kopf](https://kopf.readthedocs.io) framework. Built with security, observability, and operational simplicity as core principles.
 
 ## 🎯 Overview
 
-The S3 Provider Operator brings declarative S3 bucket management directly into your Kubernetes workflows. It enables you to:
+The Wasabi S3 Provider Operator brings declarative S3 bucket management directly into your Kubernetes workflows. It enables you to:
 
-- **Manage S3 buckets** across multiple providers through Kubernetes CRDs
+- **Manage Wasabi S3 buckets** through Kubernetes CRDs
 - **Configure bucket policies** with IAM-style policy documents
 - **Manage access keys** with automatic rotation support
-- **Multi-provider support** for Wasabi, AWS S3, MinIO, and any S3-compatible provider
+- **Wasabi-focused** - Optimized specifically for Wasabi's S3-compatible API
 - **Secure by default** with least-privilege RBAC, secret management, and security best practices
 - **Observable** with Prometheus metrics, structured logging, and Kubernetes Events
 
@@ -32,11 +32,10 @@ The S3 Provider Operator brings declarative S3 bucket management directly into y
 - TLS verification enforced
 - Support for MFA-protected operations
 
-☁️ **Multi-Provider Support**
-- Wasabi (Primary focus)
-- AWS S3
-- MinIO
-- Generic S3-compatible providers
+☁️ **Wasabi-Optimized**
+- Native Wasabi support
+- Optimized for Wasabi's S3-compatible API
+- Full feature support for Wasabi-specific capabilities
 
 📊 **Production Ready Observability**
 - Prometheus metrics (reconciliation counters, durations, S3 operations)
@@ -57,8 +56,8 @@ The S3 Provider Operator brings declarative S3 bucket management directly into y
 Install the operator using Helm:
 
 ```bash
-helm install s3-operator ./helm/s3-operator \
-  --namespace s3-operator-system \
+helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
+  --namespace wasabi-s3-provider-system \
   --create-namespace
 ```
 
@@ -131,7 +130,7 @@ spec:
 Represents an S3-compatible storage provider connection.
 
 **Key Fields:**
-- `spec.type` (required) — Provider type: `wasabi`, `aws`, `minio`, `custom`
+- `spec.type` (required) — Provider type: `wasabi`
 - `spec.endpoint` (required) — Provider API endpoint URL
 - `spec.region` (required) — Provider region
 - `spec.auth` (required) — Authentication configuration
@@ -219,10 +218,10 @@ Configure via Helm values:
 
 The operator exposes Prometheus metrics on port `8080`:
 
-- `s3_operator_reconcile_total{kind,result}` — Reconciliation counts
-- `s3_operator_reconcile_duration_seconds{kind}` — Reconciliation latency histogram
-- `s3_operator_bucket_operations_total{operation,result}` — S3 operation counts
-- `s3_operator_provider_connectivity{provider}` — Provider connectivity status
+- `wasabi_s3_provider_reconcile_total{kind,result}` — Reconciliation counts
+- `wasabi_s3_provider_reconcile_duration_seconds{kind}` — Reconciliation latency histogram
+- `wasabi_s3_provider_bucket_operations_total{operation,result}` — S3 operation counts
+- `wasabi_s3_provider_provider_connectivity{provider}` — Provider connectivity status
 
 ### Events
 
@@ -252,7 +251,7 @@ Structured JSON logs with fields:
 ```bash
 # Clone repository
 git clone <repository-url>
-cd s3-operator
+cd wasabi-s3-provider
 
 # Install dependencies
 pip install -r requirements-dev.txt
@@ -269,23 +268,23 @@ pytest tests/
 ```
 .
 ├── src/
-│   └── s3_operator/
+│   └── wasabi_s3_provider/
 │       ├── main.py              # Kopf handlers and reconciliation logic
 │       ├── metrics.py           # Prometheus metrics definitions
 │       ├── constants.py         # API group and label constants
 │       ├── builders/             # Resource builders
 │       ├── services/            # S3 service implementations
 │       │   ├── s3/              # S3 operations
-│       │   └── aws/              # AWS-specific operations
+│       │   └── aws/              # AWS/Wasabi compatible operations
 │       └── utils/               # Utility functions
 ├── helm/
-│   └── s3-operator/
+│   └── wasabi-s3-provider/
 │       ├── crds/                # CRD definitions (not templated)
 │       ├── templates/           # Helm templates for operator deployment
 │       └── values.yaml          # Default Helm values
 ├── tests/
 │   ├── unit/                    # Unit tests
-│   └── integration/             # Integration tests (LocalStack/MinIO)
+│   └── integration/             # Integration tests
 ├── examples/                    # Example CRs
 ├── architecture/               # Architecture documentation
 └── docs/                        # Additional documentation
@@ -297,11 +296,11 @@ pytest tests/
 # Unit tests
 pytest tests/unit/
 
-# Integration tests (requires LocalStack or MinIO)
+# Integration tests
 pytest tests/integration/
 
 # Run with coverage
-pytest --cov=s3_operator tests/
+pytest --cov=wasabi_s3_provider tests/
 ```
 
 ### Code Quality
@@ -363,7 +362,7 @@ This project is licensed under the **Unlicense**.
 
 - **Repository**: `<repository-url>`
 - **Issues**: `<repository-url>/issues`
-- **Helm Chart**: `./helm/s3-operator`
+- **Helm Chart**: `./helm/wasabi-s3-provider`
 
 ## 🙏 Acknowledgments
 
@@ -373,7 +372,7 @@ This project is licensed under the **Unlicense**.
 
 ---
 
-**Status:** v1alpha1 — Planning phase
+**Status:** v1alpha1 — Wasabi S3 Provider
 
-This operator is currently in planning and architecture design phase. Implementation will follow the development plan in the `architecture/` directory.
+This operator is specifically designed for Wasabi S3 storage, providing declarative bucket management, policies, and access key management.
 
