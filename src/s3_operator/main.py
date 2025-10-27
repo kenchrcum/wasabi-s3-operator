@@ -310,8 +310,33 @@ def handle_bucket(
                 user_name = auto_manage.get("userName", bucket_name)
                 access_level = auto_manage.get("accessLevel", "readwrite")
                 
-                # Step 1: Create User
+                # Step 1: Create User with inline policy
                 user_crd_name = f"{name}-user"
+                
+                # Determine actions based on access level for inline policy
+                actions = []
+                if access_level == "readonly":
+                    actions = ["s3:GetObject", "s3:ListBucket"]
+                elif access_level == "readwrite":
+                    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+                else:  # full
+                    actions = ["s3:*"]
+                
+                # Create inline IAM policy for the user
+                user_policy = {
+                    "version": "2012-10-17",
+                    "statement": [
+                        {
+                            "effect": "Allow",
+                            "action": actions,
+                            "resource": [
+                                f"arn:aws:s3:::{bucket_name}",
+                                f"arn:aws:s3:::{bucket_name}/*",
+                            ],
+                        }
+                    ],
+                }
+                
                 # Check if user already exists
                 try:
                     existing_user = api.get_namespaced_custom_object(
@@ -324,7 +349,7 @@ def handle_bucket(
                     logger.info(f"User {user_crd_name} already exists")
                 except client.exceptions.ApiException as e:
                     if e.status == 404:
-                        # Create user
+                        # Create user with inline policy
                         import json
                         user_body = {
                             "apiVersion": "s3.cloud37.dev/v1alpha1",
@@ -345,6 +370,7 @@ def handle_bucket(
                             "spec": {
                                 "providerRef": {"name": provider_name},
                                 "name": user_name,
+                                "policy": user_policy,
                                 "tags": {"ManagedBy": "s3-operator", "Bucket": bucket_name},
                             },
                         }
@@ -355,78 +381,11 @@ def handle_bucket(
                             plural="users",
                             body=user_body,
                         )
-                        logger.info(f"Created user {user_crd_name}")
+                        logger.info(f"Created user {user_crd_name} with inline policy")
                     else:
                         raise
                 
-                # Step 2: Create BucketPolicy
-                policy_crd_name = f"{name}-policy"
-                try:
-                    existing_policy = api.get_namespaced_custom_object(
-                        group="s3.cloud37.dev",
-                        version="v1alpha1",
-                        namespace=namespace,
-                        plural="bucketpolicies",
-                        name=policy_crd_name,
-                    )
-                    logger.info(f"BucketPolicy {policy_crd_name} already exists")
-                except client.exceptions.ApiException as e:
-                    if e.status == 404:
-                        # Determine actions based on access level
-                        actions = []
-                        if access_level == "readonly":
-                            actions = ["s3:GetObject", "s3:ListBucket"]
-                        elif access_level == "readwrite":
-                            actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-                        else:  # full
-                            actions = ["s3:*"]
-                        
-                        policy_body = {
-                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                            "kind": "BucketPolicy",
-                            "metadata": {
-                                "name": policy_crd_name,
-                                "namespace": namespace,
-                                "ownerReferences": [
-                                    {
-                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                        "kind": "Bucket",
-                                        "name": name,
-                                        "uid": meta.get("uid"),
-                                        "controller": True,
-                                    }
-                                ],
-                            },
-                            "spec": {
-                                "bucketRef": {"name": name},
-                                "policy": {
-                                    "version": "2012-10-17",
-                                    "statement": [
-                                        {
-                                            "effect": "Allow",
-                                            "principal": f"arn:aws:iam::wasabi:user/{user_name}",
-                                            "action": actions,
-                                            "resource": [
-                                                f"arn:aws:s3:::{bucket_name}",
-                                                f"arn:aws:s3:::{bucket_name}/*",
-                                            ],
-                                        }
-                                    ],
-                                },
-                            },
-                        }
-                        api.create_namespaced_custom_object(
-                            group="s3.cloud37.dev",
-                            version="v1alpha1",
-                            namespace=namespace,
-                            plural="bucketpolicies",
-                            body=policy_body,
-                        )
-                        logger.info(f"Created bucket policy {policy_crd_name}")
-                    else:
-                        raise
-                
-                # Step 3: Create AccessKey
+                # Step 2: Create AccessKey
                 accesskey_crd_name = f"{name}-accesskey"
                 try:
                     existing_key = api.get_namespaced_custom_object(
@@ -949,6 +908,14 @@ def handle_access_key(
                 "observedGeneration": meta.get("generation", 0),
             })
 
+        # Get the actual IAM user name from the User CRD spec
+        user_spec = user_obj.get("spec", {})
+        iam_user_name = user_spec.get("name")
+        if not iam_user_name:
+            error_msg = f"User {user_name} does not have a valid IAM user name in spec"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
         # Check if access key already exists
         existing_key_id = status.get("accessKeyId")
         conditions = status.get("conditions", [])
@@ -956,7 +923,7 @@ def handle_access_key(
         if not existing_key_id:
             # Create access key for the user via IAM
             try:
-                key_response = provider_client.create_access_key(user_name)
+                key_response = provider_client.create_access_key(iam_user_name)
                 access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
                 secret_access_key = key_response.get("AccessKey", {}).get("SecretAccessKey")
 
@@ -981,7 +948,7 @@ def handle_access_key(
                         ],
                     )
                     emit_access_key_created(meta, access_key_id)
-                    logger.info(f"Created access key {access_key_id} for user {user_name}")
+                    logger.info(f"Created access key {access_key_id} for user {iam_user_name}")
                 except client.exceptions.ApiException as e:
                     if e.status == 409:
                         # Secret already exists, read it
@@ -990,7 +957,7 @@ def handle_access_key(
                         raise
 
                 # Set ready condition
-                conditions = set_ready_condition(conditions, True, f"Access key {access_key_id} created for user {user_name}")
+                conditions = set_ready_condition(conditions, True, f"Access key {access_key_id} created for user {iam_user_name}")
 
                 # Update status
                 status_update = {

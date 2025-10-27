@@ -115,7 +115,12 @@ class AWSProvider:
             if config.get("encryption_enabled"):
                 algorithm = config.get("encryption_algorithm", "AES256")
                 kms_key_id = config.get("kms_key_id")
-                self.set_bucket_encryption(name, algorithm, kms_key_id)
+                try:
+                    self.set_bucket_encryption(name, algorithm, kms_key_id)
+                except ClientError as enc_error:
+                    # Log warning but don't fail bucket creation
+                    # Some regions/providers may not support encryption
+                    logger.warning(f"Failed to set encryption for bucket {name}: {enc_error}. Bucket created without encryption.")
 
             # Set tags
             tags = config.get("tags")
@@ -264,7 +269,13 @@ class AWSProvider:
                 if "effect" in stmt:
                     aws_stmt["Effect"] = stmt["effect"]
                 if "principal" in stmt:
-                    aws_stmt["Principal"] = stmt["principal"]
+                    principal = stmt["principal"]
+                    # Convert principal to proper format
+                    # If it's a string starting with "arn:", wrap it in {"AWS": principal}
+                    if isinstance(principal, str) and principal.startswith("arn:"):
+                        aws_stmt["Principal"] = {"AWS": principal}
+                    else:
+                        aws_stmt["Principal"] = principal
                 if "action" in stmt:
                     aws_stmt["Action"] = stmt["action"]
                 if "resource" in stmt:
@@ -337,10 +348,12 @@ class AWSProvider:
             
             if policy:
                 import json
+                # Convert CRD policy format to AWS format
+                aws_policy = self._convert_policy_to_aws_format(policy)
                 self.iam_client.put_user_policy(
                     UserName=name,
                     PolicyName=f"{name}-policy",
-                    PolicyDocument=json.dumps(policy),
+                    PolicyDocument=json.dumps(aws_policy),
                 )
             
             return response
@@ -351,6 +364,9 @@ class AWSProvider:
     def delete_user(self, name: str) -> None:
         """Delete an IAM user.
         
+        This method will first delete all access keys and inline policies
+        associated with the user before deleting the user itself.
+        
         Args:
             name: User name
         """
@@ -358,7 +374,33 @@ class AWSProvider:
             raise ValueError("IAM endpoint not configured")
         
         try:
+            # First, delete all access keys
+            try:
+                access_keys = self.list_access_keys(name)
+                for access_key_id in access_keys:
+                    try:
+                        self.delete_access_key(name, access_key_id)
+                        logger.info(f"Deleted access key {access_key_id} for user {name}")
+                    except ClientError as e:
+                        logger.warning(f"Failed to delete access key {access_key_id}: {e}")
+            except ClientError as e:
+                logger.warning(f"Failed to list access keys for user {name}: {e}")
+            
+            # Then, delete all inline policies
+            try:
+                policies = self.list_user_policies(name)
+                for policy_name in policies:
+                    try:
+                        self.delete_user_policy(name, policy_name)
+                        logger.info(f"Deleted policy {policy_name} from user {name}")
+                    except ClientError as e:
+                        logger.warning(f"Failed to delete policy {policy_name}: {e}")
+            except ClientError as e:
+                logger.warning(f"Failed to list policies for user {name}: {e}")
+            
+            # Finally, delete the user
             self.iam_client.delete_user(UserName=name)
+            logger.info(f"Deleted user {name}")
         except ClientError as e:
             logger.error(f"Failed to delete user {name}: {e}")
             raise
@@ -382,6 +424,25 @@ class AWSProvider:
             logger.error(f"Failed to create access key for user {user_name}: {e}")
             raise
     
+    def list_access_keys(self, user_name: str) -> list[str]:
+        """List all access keys for a user.
+        
+        Args:
+            user_name: User name
+            
+        Returns:
+            List of access key IDs
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            response = self.iam_client.list_access_keys(UserName=user_name)
+            return [key["AccessKeyId"] for key in response.get("AccessKeyMetadata", [])]
+        except ClientError as e:
+            logger.error(f"Failed to list access keys for user {user_name}: {e}")
+            raise
+    
     def delete_access_key(self, user_name: str, access_key_id: str) -> None:
         """Delete an access key.
         
@@ -396,5 +457,40 @@ class AWSProvider:
             self.iam_client.delete_access_key(UserName=user_name, AccessKeyId=access_key_id)
         except ClientError as e:
             logger.error(f"Failed to delete access key {access_key_id}: {e}")
+            raise
+    
+    def list_user_policies(self, user_name: str) -> list[str]:
+        """List all inline policies for a user.
+        
+        Args:
+            user_name: User name
+            
+        Returns:
+            List of policy names
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            response = self.iam_client.list_user_policies(UserName=user_name)
+            return response.get("PolicyNames", [])
+        except ClientError as e:
+            logger.error(f"Failed to list policies for user {user_name}: {e}")
+            raise
+    
+    def delete_user_policy(self, user_name: str, policy_name: str) -> None:
+        """Delete an inline policy from a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name to delete
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            self.iam_client.delete_user_policy(UserName=user_name, PolicyName=policy_name)
+        except ClientError as e:
+            logger.error(f"Failed to delete policy {policy_name} from user {user_name}: {e}")
             raise
 
