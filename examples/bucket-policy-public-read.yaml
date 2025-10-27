@@ -1,0 +1,16 @@
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: BucketPolicy
+metadata:
+  name: public-read-policy
+spec:
+  bucketRef:
+    name: my-bucket
+  policy:
+    version: "2012-10-17"
+    statement:
+      - sid: PublicReadGetObject
+        effect: Allow
+        principal: "*"
+        action: s3:GetObject
+        resource: "arn:aws:s3:::my-bucket/*"
+

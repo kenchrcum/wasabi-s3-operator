@@ -1,0 +1,24 @@
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: my-backup-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: my-backup-bucket
+  versioning:
+    enabled: true
+  encryption:
+    enabled: true
+    algorithm: AES256
+  publicAccess:
+    blockPublicAcls: true
+    blockPublicPolicy: true
+    ignorePublicAcls: true
+    restrictPublicBuckets: true
+  tagging:
+    tags:
+      Environment: production
+      Owner: platform-team
+      Purpose: backups
+

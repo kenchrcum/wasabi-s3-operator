@@ -1,0 +1,134 @@
+# Kubernetes Operator Patterns for S3 Operator
+
+## Controller Patterns
+
+### Handler Registration
+```python
+@kopf.on.create("s3.cloud37.dev", "v1alpha1", "providers")
+@kopf.on.update("s3.cloud37.dev", "v1alpha1", "providers")
+@kopf.on.resume("s3.cloud37.dev", "v1alpha1", "providers")
+@kopf.on.delete("s3.cloud37.dev", "v1alpha1", "providers")
+def handle_provider(spec, meta, status, **kwargs):
+    """Reconcile Provider resource."""
+    pass
+```
+
+### Idempotency
+- All handlers must be idempotent
+- Safe to call multiple times
+- Check current state before making changes
+- Use Server-Side Apply for Kubernetes resources
+
+### Status Updates
+- Update status after each reconciliation step
+- Use Conditions for user-facing state
+- Emit Events for debugging
+- Track observedGeneration to detect spec changes
+
+## Provider Abstraction
+
+### Provider Interface
+```python
+class S3Provider(Protocol):
+    def list_buckets(self) -> List[str]:
+        """List all buckets."""
+        pass
+    
+    def create_bucket(self, name: str, config: BucketConfig) -> None:
+        """Create a bucket."""
+        pass
+    
+    def delete_bucket(self, name: str) -> None:
+        """Delete a bucket."""
+        pass
+```
+
+### Provider Implementations
+- Wasabi: Use boto3 with Wasabi endpoint
+- AWS: Use boto3 with AWS endpoint
+- MinIO: Use minio-py SDK
+- Generic: Support any S3-compatible provider
+
+## Secret Management
+
+### Storage
+- Store credentials in Kubernetes Secrets
+- Never store in CRD status
+- Use owner references for cleanup
+- Support secret rotation
+
+### Handling
+- Read secrets only when needed
+- Never log secret values
+- Support multiple secret formats
+- Handle missing secrets gracefully
+
+## Error Handling
+
+### Transient Failures
+- Retry with exponential backoff
+- Surface via Conditions
+- Emit Events for operator visibility
+- Requeue on failure
+
+### Permanent Failures
+- Set appropriate Condition status
+- Stop retrying (avoid busy loops)
+- Provide clear error messages
+- Emit error Events
+
+## Dependency Management
+
+### Cross-Resource References
+- Bucket depends on Provider
+- BucketPolicy depends on Bucket
+- AccessKey depends on Provider
+
+### Handling Updates
+- On Provider update: reconcile dependent Buckets
+- On Bucket update: reconcile dependent BucketPolicies
+- Track dependencies with indexing
+
+### Finalizers
+- Add finalizer before creating provider resources
+- Remove finalizer after cleanup
+- Handle deletion gracefully
+
+## Observability
+
+### Events
+- Emit Events on resource transitions
+- Use consistent event reasons
+- Include resource identifiers
+- Never include secrets in events
+
+### Metrics
+- Expose Prometheus metrics
+- Track reconcile counts and durations
+- Track S3 operation success/failure
+- Track provider connectivity
+
+### Logs
+- Use structured JSON logging
+- Include correlation IDs
+- Never log secrets
+- Use appropriate log levels
+
+## Testing
+
+### Unit Tests
+- Mock S3 provider clients
+- Test error handling
+- Test configuration computation
+- Test secret handling
+
+### Integration Tests
+- Use LocalStack or MinIO
+- Test CRUD operations
+- Test dependency management
+- Test secret rotation
+
+### Concurrency Tests
+- Test parallel resource management
+- Test provider connection failures
+- Test resource updates during reconciliation

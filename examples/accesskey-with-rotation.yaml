@@ -1,0 +1,16 @@
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: AccessKey
+metadata:
+  name: application-key
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  displayName: Application Service Key
+  tags:
+    Environment: production
+    Application: api-server
+  rotate:
+    enabled: true
+    intervalDays: 90
+    previousKeysRetentionDays: 7
+

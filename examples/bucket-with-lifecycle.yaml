@@ -1,0 +1,34 @@
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: logs-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: logs-bucket
+  lifecycle:
+    rules:
+      - id: delete-old-logs
+        status: Enabled
+        prefix: "old/"
+        expiration:
+          days: 90
+      - id: transition-to-cold-storage
+        status: Enabled
+        prefix: "archive/"
+        transitions:
+          - days: 30
+            storageClass: STANDARD_IA
+          - days: 90
+            storageClass: GLACIER
+  cors:
+    rules:
+      - allowedOrigins:
+          - https://example.com
+        allowedMethods:
+          - GET
+          - HEAD
+        allowedHeaders:
+          - "*"
+        maxAgeSeconds: 3600
+

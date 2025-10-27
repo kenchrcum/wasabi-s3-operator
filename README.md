@@ -1,0 +1,378 @@
+# S3 Provider Operator
+
+![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+[![License](https://img.shields.io/badge/license-Unlicense-lightgrey.svg)](LICENSE)
+
+A Kubernetes operator for managing S3-compatible storage providers (Wasabi, AWS S3, MinIO, etc.) using the [Kopf](https://kopf.readthedocs.io) framework. Built with security, observability, and operational simplicity as core principles.
+
+## 🎯 Overview
+
+The S3 Provider Operator brings declarative S3 bucket management directly into your Kubernetes workflows. It enables you to:
+
+- **Manage S3 buckets** across multiple providers through Kubernetes CRDs
+- **Configure bucket policies** with IAM-style policy documents
+- **Manage access keys** with automatic rotation support
+- **Multi-provider support** for Wasabi, AWS S3, MinIO, and any S3-compatible provider
+- **Secure by default** with least-privilege RBAC, secret management, and security best practices
+- **Observable** with Prometheus metrics, structured logging, and Kubernetes Events
+
+### Key Features
+
+✨ **Four Declarative CRDs**
+- `Provider` — Define S3 provider connections
+- `Bucket` — Manage S3 buckets with versioning, encryption, lifecycle rules
+- `BucketPolicy` — Apply IAM-style bucket policies
+- `AccessKey` — Manage access keys with automatic rotation
+
+🔐 **Security First**
+- Never store credentials in CRD status
+- Kubernetes Secrets for all credentials
+- Automatic secret rotation support
+- Least-privilege RBAC by default
+- TLS verification enforced
+- Support for MFA-protected operations
+
+☁️ **Multi-Provider Support**
+- Wasabi (Primary focus)
+- AWS S3
+- MinIO
+- Generic S3-compatible providers
+
+📊 **Production Ready Observability**
+- Prometheus metrics (reconciliation counters, durations, S3 operations)
+- Kubernetes Events for lifecycle transitions
+- Structured JSON logs with correlation IDs
+- Status conditions following Kubernetes conventions
+
+## 📋 Prerequisites
+
+- Kubernetes 1.24+ cluster
+- Helm 3.8+
+- Optional: Prometheus for metrics collection
+
+## 🚀 Quick Start
+
+### Installation
+
+Install the operator using Helm:
+
+```bash
+helm install s3-operator ./helm/s3-operator \
+  --namespace s3-operator-system \
+  --create-namespace
+```
+
+### Basic Example
+
+1. **Create a Provider** for your S3-compatible storage:
+
+```yaml
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Provider
+metadata:
+  name: wasabi-us-east-1
+spec:
+  type: wasabi
+  endpoint: https://s3.wasabisys.com
+  region: us-east-1
+  auth:
+    accessKeySecretRef:
+      name: wasabi-credentials
+      key: access-key
+    secretKeySecretRef:
+      name: wasabi-credentials
+      key: secret-key
+```
+
+2. **Create a Bucket**:
+
+```yaml
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: my-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: my-bucket-name
+  versioning:
+    enabled: true
+  encryption:
+    enabled: true
+    algorithm: AES256
+  publicAccess:
+    blockPublicAcls: true
+    blockPublicPolicy: true
+```
+
+3. **Apply a Bucket Policy**:
+
+```yaml
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: BucketPolicy
+metadata:
+  name: my-bucket-policy
+spec:
+  bucketRef:
+    name: my-bucket
+  policy:
+    version: "2012-10-17"
+    statement:
+      - effect: Allow
+        principal: "*"
+        action: s3:GetObject
+        resource: "arn:aws:s3:::my-bucket-name/*"
+```
+
+## 📚 Custom Resource Definitions
+
+### Provider
+
+Represents an S3-compatible storage provider connection.
+
+**Key Fields:**
+- `spec.type` (required) — Provider type: `wasabi`, `aws`, `minio`, `custom`
+- `spec.endpoint` (required) — Provider API endpoint URL
+- `spec.region` (required) — Provider region
+- `spec.auth` (required) — Authentication configuration
+- `spec.tls` (optional) — TLS configuration
+- `spec.pathStyle` (default: `true`) — Use path-style addressing
+
+**Status Conditions:**
+- `AuthValid` — Credentials validation status
+- `EndpointReachable` — Provider endpoint connectivity
+- `Ready` — Overall readiness
+
+### Bucket
+
+Represents an S3 bucket managed by the operator.
+
+**Key Fields:**
+- `spec.providerRef.name` (required) — Reference to Provider
+- `spec.name` (required) — Bucket name (DNS-compliant)
+- `spec.versioning` — Versioning configuration
+- `spec.encryption` — Encryption at rest configuration
+- `spec.publicAccess` — Public access block settings
+- `spec.lifecycle` — Lifecycle rules for object management
+- `spec.cors` — CORS configuration
+
+**Status Conditions:**
+- `Ready` — Bucket is ready and synchronized
+- `ProviderNotReady` — Referenced Provider is not ready
+- `CreationFailed` — Bucket creation failed
+
+### BucketPolicy
+
+Represents an IAM-style bucket policy document.
+
+**Key Fields:**
+- `spec.bucketRef.name` (required) — Reference to Bucket
+- `spec.policy` (required) — IAM policy document (JSON)
+
+**Status Conditions:**
+- `Ready` — Policy is applied and synchronized
+- `BucketNotReady` — Referenced Bucket is not ready
+- `PolicyInvalid` — Policy document validation failed
+
+### AccessKey
+
+Represents an access key pair for S3 authentication.
+
+**Key Fields:**
+- `spec.providerRef.name` (required) — Reference to Provider
+- `spec.displayName` — Human-readable identifier
+- `spec.rotate` — Automatic rotation configuration
+
+**Status Conditions:**
+- `Ready` — Access key is ready and synchronized
+- `ProviderNotReady` — Referenced Provider is not ready
+- `CreationFailed` — Access key creation failed
+- `RotationFailed` — Access key rotation failed
+
+## 🔒 Security
+
+### Credential Management
+
+- **Never stored in CRD status** — All credentials stored in Kubernetes Secrets
+- **Secret rotation** — Automatic rotation support for access keys
+- **Least-privilege RBAC** — Minimal permissions by default
+- **TLS verification** — Enforced by default (can be disabled for development)
+
+### RBAC Presets
+
+Configure via Helm values:
+
+- **`minimal`** (default) — Namespace-scoped permissions
+- **`scoped`** — Extended permissions for specific resources
+- **`full`** (opt-in) — Full cluster access (use with caution)
+
+### Bucket Security
+
+- **Default to private** — Buckets are private by default
+- **Block public access** — Public access blocked by default
+- **Encryption support** — AES256 and AWS KMS encryption support
+- **MFA protection** — Support for MFA-protected delete operations
+
+## 📊 Observability
+
+### Metrics
+
+The operator exposes Prometheus metrics on port `8080`:
+
+- `s3_operator_reconcile_total{kind,result}` — Reconciliation counts
+- `s3_operator_reconcile_duration_seconds{kind}` — Reconciliation latency histogram
+- `s3_operator_bucket_operations_total{operation,result}` — S3 operation counts
+- `s3_operator_provider_connectivity{provider}` — Provider connectivity status
+
+### Events
+
+The operator emits Kubernetes Events for:
+- Provider connectivity changes
+- Bucket creation/update/deletion
+- Policy application failures
+- Access key rotation events
+
+### Logs
+
+Structured JSON logs with fields:
+- `controller`, `resource`, `uid`, `provider`, `event`, `reason`
+
+**No secrets are logged.** The operator sanitizes all log output.
+
+## 🛠️ Development
+
+### Prerequisites
+
+- Python 3.14+
+- `uv` or `pip` for dependency management
+- Pre-commit hooks configured
+
+### Setup
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd s3-operator
+
+# Install dependencies
+pip install -r requirements-dev.txt
+
+# Install pre-commit hooks
+pre-commit install
+
+# Run tests
+pytest tests/
+```
+
+### Project Structure
+
+```
+.
+├── src/
+│   └── s3_operator/
+│       ├── main.py              # Kopf handlers and reconciliation logic
+│       ├── metrics.py           # Prometheus metrics definitions
+│       ├── constants.py         # API group and label constants
+│       ├── builders/             # Resource builders
+│       ├── services/            # S3 service implementations
+│       │   ├── s3/              # S3 operations
+│       │   └── aws/              # AWS-specific operations
+│       └── utils/               # Utility functions
+├── helm/
+│   └── s3-operator/
+│       ├── crds/                # CRD definitions (not templated)
+│       ├── templates/           # Helm templates for operator deployment
+│       └── values.yaml          # Default Helm values
+├── tests/
+│   ├── unit/                    # Unit tests
+│   └── integration/             # Integration tests (LocalStack/MinIO)
+├── examples/                    # Example CRs
+├── architecture/               # Architecture documentation
+└── docs/                        # Additional documentation
+```
+
+### Testing
+
+```bash
+# Unit tests
+pytest tests/unit/
+
+# Integration tests (requires LocalStack or MinIO)
+pytest tests/integration/
+
+# Run with coverage
+pytest --cov=s3_operator tests/
+```
+
+### Code Quality
+
+The project uses:
+- **`ruff`** — Fast Python linter
+- **`ruff format`** / **`black`** — Code formatting
+- **`mypy`** — Static type checking
+- **`pytest`** — Testing framework
+
+**Pre-commit checks:**
+
+```bash
+pre-commit run --all-files
+```
+
+## 📖 Documentation
+
+### Core Documentation
+- [Development Plan](./architecture/development-plan.md) - Comprehensive architectural documentation
+- [CRD Specifications](./architecture/crd-specifications.md) - Detailed CRD schemas and specifications
+
+### Best Practices
+- [Python Guidelines](.cursor/rules/python-guidelines.mdc) - Python coding standards
+- [Operator Patterns](.cursor/rules/operator-patterns.mdc) - Kubernetes operator patterns
+- [Security Practices](.cursor/rules/security-practices.mdc) - Security guidelines
+- [Testing Strategy](.cursor/rules/testing-strategy.mdc) - Testing approach
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+1. **Fork** the repository
+2. **Create a feature branch**: `git checkout -b feat/my-feature`
+3. **Follow the code style**: Run `pre-commit run --all-files`
+4. **Add tests** for new functionality
+5. **Update documentation** as needed
+6. **Commit with Conventional Commits**: `feat:`, `fix:`, `docs:`, etc.
+7. **Submit a Pull Request**
+
+### Commit Message Format
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+## 📝 License
+
+This project is licensed under the **Unlicense**.
+
+## 🔗 Links
+
+- **Repository**: `<repository-url>`
+- **Issues**: `<repository-url>/issues`
+- **Helm Chart**: `./helm/s3-operator`
+
+## 🙏 Acknowledgments
+
+- Built with [Kopf](https://kopf.readthedocs.io) — Kubernetes Operator Pythonic Framework
+- Uses [kubernetes-client/python](https://github.com/kubernetes-client/python)
+- Uses [boto3](https://boto3.amazonaws.com) for AWS/S3 operations
+
+---
+
+**Status:** v1alpha1 — Planning phase
+
+This operator is currently in planning and architecture design phase. Implementation will follow the development plan in the `architecture/` directory.
+

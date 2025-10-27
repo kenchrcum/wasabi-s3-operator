@@ -1,0 +1,53 @@
+# Python Guidelines for S3 Operator
+
+## General Principles
+- Use Python 3.14+ for all code
+- Follow PEP 8 style guidelines
+- Use type hints for all function signatures
+- Keep functions small and focused
+- Write comprehensive docstrings
+
+## Code Quality Tools
+- **Ruff**: Fast Python linter for code quality checks
+- **Black**: Code formatter (or use ruff format)
+- **Mypy**: Static type checking
+- **Pytest**: Testing framework
+
+## Type Checking
+- Use strict type hints at public boundaries
+- Avoid `Any` in public APIs when possible
+- Use `typing.Protocol` for duck typing
+- Prefer specific types over generic ones
+
+## Testing
+- Write unit tests for all logic
+- Use pytest fixtures for test setup
+- Mock external dependencies (S3 APIs)
+- Test error conditions and edge cases
+- Use LocalStack or MinIO for integration tests
+
+## Code Organization
+- Keep controllers lightweight
+- Extract business logic into services
+- Use builders for Kubernetes resource creation
+- Separate concerns (controller, service, model)
+
+## Error Handling
+- Use descriptive error messages
+- Surface errors via Conditions and Events
+- Never log secrets or credentials
+- Handle transient failures with retries
+- Provide context in error messages
+
+## Security
+- Never store credentials in CRD status
+- Use Kubernetes Secrets for all credentials
+- Redact secrets from logs
+- Support secret rotation
+- Use least-privilege RBAC by default
+
+## Documentation
+- Write clear docstrings for all public functions
+- Document complex algorithms
+- Keep inline comments minimal and useful
+- Update README with examples

@@ -1,0 +1,72 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "s3-operator.fullname" . }}
+  labels:
+    {{- include "s3-operator.labels" . | nindent 4 }}
+rules:
+  # CRDs
+  - apiGroups:
+      - s3.cloud37.dev
+    resources:
+      - providers
+      - buckets
+      - bucketpolicies
+      - accesskeys
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  
+  # CRD Status
+  - apiGroups:
+      - s3.cloud37.dev
+    resources:
+      - providers/status
+      - buckets/status
+      - bucketpolicies/status
+      - accesskeys/status
+    verbs:
+      - get
+      - update
+      - patch
+  
+  # Secrets (for credentials)
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  
+  # Events
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  
+  # ServiceAccounts
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+{{- end }}
+

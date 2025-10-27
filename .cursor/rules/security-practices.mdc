@@ -1,0 +1,158 @@
+# Security Practices for S3 Operator
+
+## Credential Management
+
+### Storage
+- **Always** use Kubernetes Secrets for credentials
+- Never store credentials in CRD status or annotations
+- Use owner references to ensure Secret cleanup
+- Support secret rotation without downtime
+
+### Access
+- Read secrets only when needed for API calls
+- Cache connection clients, not credentials
+- Limit secret access scope (resourceNames where possible)
+- Support cross-namespace secret access (configurable)
+
+### Logging
+- **Never** log credentials or secret values
+- Redact all secret-related log output
+- Use structured logging with secret filtering
+- Audit log access patterns
+
+## RBAC
+
+### Defaults
+- Minimal permissions by default
+- Namespace-scoped where possible
+- Cluster-wide access only when explicitly enabled
+
+### Presets
+- **minimal**: Namespace-scoped permissions for CRs
+- **scoped**: Extended permissions for specific resources
+- **full**: Cluster-wide access (opt-in only)
+
+### Executor Permissions
+- Separate ServiceAccount for executor operations
+- Least-privilege permissions for executor
+- No cluster-admin unless explicitly requested
+
+## Provider Security
+
+### TLS
+- Verify TLS certificates by default
+- Support custom CA certificates
+- Document TLS configuration options
+- Support insecure mode only for development
+
+### Authentication
+- Support multiple authentication methods
+- Use typed Secrets (e.g., Opaque, Basic Auth)
+- Enforce strong authentication requirements
+- Support session tokens for temporary credentials
+
+### Access Control
+- Default to restrictive bucket policies
+- Enforce least-privilege bucket access
+- Support MFA for delete operations
+- Document public access settings
+
+## Resource Security
+
+### Bucket Configuration
+- Default to private buckets
+- Block public access by default
+- Support encryption at rest
+- Enable versioning for critical data
+
+### Policy Management
+- Validate policy documents before applying
+- Prevent policy conflicts
+- Support granular access control
+- Document policy best practices
+
+### Access Keys
+- Generate strong access keys
+- Support key rotation
+- Track key usage
+- Revoke keys on deletion
+
+## Container Security
+
+### Image Security
+- Use minimal base images
+- Pin images by digest in production
+- Scan images for vulnerabilities
+- Keep images up to date
+
+### Pod Security
+- Run as non-root user
+- Read-only root filesystem
+- Drop all capabilities
+- Use seccomp RuntimeDefault profile
+
+### Network Security
+- Use NetworkPolicies to restrict egress
+- Allow only necessary network access
+- Support DNS egress to provider endpoints
+- Document network requirements
+
+## Multi-Tenancy
+
+### Namespace Isolation
+- Support per-namespace operator instances
+- Isolate provider credentials by namespace
+- Prevent cross-namespace secret access by default
+- Support cluster-wide watching (opt-in)
+
+### Resource Quotas
+- Respect Kubernetes resource quotas
+- Limit concurrent operations
+- Implement backpressure for rate limits
+- Support quota configuration
+
+## Compliance
+
+### Audit
+- Emit audit events for all operations
+- Track all provider operations
+- Support integration with external audit systems
+- Maintain operation history
+
+### Backup
+- Support bucket backup strategies
+- Document recovery procedures
+- Test disaster recovery
+- Support data retention policies
+
+### Monitoring
+- Monitor provider connectivity
+- Track credential expiration
+- Alert on security events
+- Integrate with Prometheus
+
+## Best Practices
+
+### Credentials
+1. Store all credentials in Secrets
+2. Never log secret values
+3. Rotate credentials regularly
+4. Use short-lived credentials when possible
+
+### RBAC
+1. Use minimal permissions by default
+2. Document permission requirements
+3. Review RBAC configuration regularly
+4. Use separate ServiceAccounts for different roles
+
+### Operations
+1. Test changes in non-production first
+2. Use feature flags for risky changes
+3. Monitor operations continuously
+4. Have rollback procedures ready
+
+### Documentation
+1. Document security configuration
+2. Provide security examples
+3. Keep security documentation updated
+4. Share security best practices

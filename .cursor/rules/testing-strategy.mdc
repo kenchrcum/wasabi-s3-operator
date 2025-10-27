@@ -1,0 +1,197 @@
+# Testing Strategy for S3 Operator
+
+## Testing Philosophy
+
+### Core Principles
+- **Test everything**: All code should have tests
+- **Mock external dependencies**: Don't call real S3 APIs in unit tests
+- **Use integration tests**: Test with LocalStack or MinIO
+- **Test error cases**: Don't just test happy paths
+- **Keep tests fast**: Unit tests should be < 1 second
+
+## Unit Testing
+
+### Scope
+- Test all business logic
+- Test error handling
+- Test configuration computation
+- Test secret handling
+- Test validation logic
+
+### Tools
+- **pytest**: Testing framework
+- **pytest-asyncio**: Async test support
+- **pytest-mock**: Mocking utilities
+- **pytest-cov**: Coverage reporting
+
+### Patterns
+```python
+def test_create_bucket_success():
+    """Test successful bucket creation."""
+    provider = MockProvider()
+    builder = BucketBuilder(provider)
+    
+    result = builder.create_bucket("test-bucket")
+    
+    assert result.success
+    assert provider.create_bucket_called
+```
+
+### Mocking
+- Mock S3 provider clients
+- Mock Kubernetes API calls
+- Mock secret access
+- Use fixtures for common test data
+
+## Integration Testing
+
+### Scope
+- Test CRUD operations end-to-end
+- Test provider connectivity
+- Test dependency management
+- Test secret rotation
+- Test concurrent operations
+
+### Infrastructure
+- **LocalStack**: AWS-compatible S3 emulator
+- **MinIO**: S3-compatible object storage
+- **kind**: Kubernetes cluster for integration tests
+- **pytest-kind**: pytest plugin for kind
+
+### Patterns
+```python
+@pytest.fixture
+def localstack():
+    """Fixture for LocalStack S3."""
+    client = boto3.client(
+        's3',
+        endpoint_url='http://localhost:4566',
+        aws_access_key_id='test',
+        aws_secret_access_key='test'
+    )
+    return client
+
+def test_bucket_lifecycle(localstack):
+    """Test bucket lifecycle operations."""
+    # Create bucket
+    localstack.create_bucket(Bucket='test-bucket')
+    
+    # Verify exists
+    response = localstack.head_bucket(Bucket='test-bucket')
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 200
+    
+    # Delete bucket
+    localstack.delete_bucket(Bucket='test-bucket')
+```
+
+## Test Organization
+
+### Structure
+```
+tests/
+├── unit/
+│   ├── test_provider.py
+│   ├── test_bucket.py
+│   ├── test_policy.py
+│   └── test_accesskey.py
+├── integration/
+│   ├── test_crud.py
+│   ├── test_provider_connectivity.py
+│   └── test_secret_rotation.py
+└── conftest.py
+```
+
+### Fixtures
+- Common test fixtures in `conftest.py`
+- Provider-specific fixtures in test files
+- Reusable mock objects
+- Test data generators
+
+## Testing Scenarios
+
+### Happy Path
+- Create resources successfully
+- Update resources successfully
+- Delete resources successfully
+- Reconcile resources idempotently
+
+### Error Cases
+- Missing dependencies
+- Invalid configurations
+- Provider connectivity failures
+- Resource creation failures
+- Secret access failures
+
+### Edge Cases
+- Concurrent updates
+- Resource deletion during update
+- Provider downtime
+- Network failures
+- Rate limiting
+
+## Running Tests
+
+### Unit Tests
+```bash
+pytest tests/unit/ -v
+```
+
+### Integration Tests
+```bash
+pytest tests/integration/ -v
+```
+
+### All Tests
+```bash
+pytest tests/ -v
+```
+
+### With Coverage
+```bash
+pytest --cov=s3_operator tests/
+```
+
+## CI/CD Integration
+
+### Requirements
+- All tests must pass
+- Coverage must meet threshold
+- Linting must pass
+- Type checking must pass
+
+### Pre-commit Hooks
+- Run unit tests
+- Check coverage
+- Run linters
+- Type check
+
+### CI Pipeline
+1. Lint code
+2. Type check
+3. Run unit tests
+4. Run integration tests
+5. Generate coverage report
+6. Build and test image
+
+## Best Practices
+
+### Test Writing
+1. Write tests before implementation (TDD)
+2. Use descriptive test names
+3. Keep tests isolated
+4. Use fixtures for setup
+5. Clean up test resources
+
+### Test Maintenance
+1. Update tests when code changes
+2. Remove obsolete tests
+3. Keep tests fast
+4. Review test coverage regularly
+5. Document complex tests
+
+### Debugging
+1. Use pytest flags: `-v`, `-s`, `--pdb`
+2. Add logging to tests
+3. Use pytest fixtures for debugging
+4. Isolate failing tests
+5. Check test output carefully
