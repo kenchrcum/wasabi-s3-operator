@@ -474,7 +474,7 @@ def handle_bucket(
                                     "version": "2012-10-17",
                                     "statement": [
                                         {
-                                            "sid": f"Allow{user_name}Access",
+                                            "sid": f"Allow-{user_name}-Access",
                                             "effect": "Allow",
                                             "principal": user_arn,
                                             "action": actions,
