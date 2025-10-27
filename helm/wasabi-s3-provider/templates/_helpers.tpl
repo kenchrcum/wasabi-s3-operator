@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "wasabi-s3-provider.name" -}}
+{{- define "wasabi-s3-operator.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "wasabi-s3-provider.fullname" -}}
+{{- define "wasabi-s3-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +24,16 @@ Create a default fully qualified app name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "wasabi-s3-provider.chart" -}}
+{{- define "wasabi-s3-operator.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "wasabi-s3-provider.labels" -}}
-helm.sh/chart: {{ include "wasabi-s3-provider.chart" . }}
-{{ include "wasabi-s3-provider.selectorLabels" . }}
+{{- define "wasabi-s3-operator.labels" -}}
+helm.sh/chart: {{ include "wasabi-s3-operator.chart" . }}
+{{ include "wasabi-s3-operator.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -46,17 +46,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "wasabi-s3-provider.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "wasabi-s3-provider.name" . }}
+{{- define "wasabi-s3-operator.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "wasabi-s3-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "wasabi-s3-provider.serviceAccountName" -}}
+{{- define "wasabi-s3-operator.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "wasabi-s3-provider.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "wasabi-s3-operator.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}

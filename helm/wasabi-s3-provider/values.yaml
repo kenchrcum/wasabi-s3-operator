@@ -1,8 +1,8 @@
-# Default values for wasabi-s3-provider
+# Default values for wasabi-s3-operator
 replicaCount: 1
 
 image:
-  repository: kenchrcum/wasabi-s3-provider
+  repository: kenchrcum/wasabi-s3-operator
   pullPolicy: IfNotPresent
   tag: "latest"
 

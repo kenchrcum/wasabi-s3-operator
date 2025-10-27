@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "wasabi-s3-provider.fullname" . }}
+  name: {{ include "wasabi-s3-operator.fullname" . }}
   labels:
-    {{- include "wasabi-s3-provider.labels" . | nindent 4 }}
+    {{- include "wasabi-s3-operator.labels" . | nindent 4 }}
 rules:
   # CRDs - allow listing to discover them
   - apiGroups:

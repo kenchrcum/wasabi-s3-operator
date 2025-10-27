@@ -23,7 +23,7 @@ ANNOTATION_OWNER_UID = f"{API_GROUP}/owner-uid"
 FINALIZER = f"{API_GROUP}/finalizer"
 
 # Field Manager
-FIELD_MANAGER = "wasabi-s3-provider"
+FIELD_MANAGER = "wasabi-s3-operator"
 
 # Condition Types
 COND_READY = "Ready"

@@ -2,16 +2,16 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "wasabi-s3-provider.fullname" . }}
+  name: {{ include "wasabi-s3-operator.fullname" . }}
   labels:
-    {{- include "wasabi-s3-provider.labels" . | nindent 4 }}
+    {{- include "wasabi-s3-operator.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "wasabi-s3-provider.fullname" . }}
+  name: {{ include "wasabi-s3-operator.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "wasabi-s3-provider.serviceAccountName" . }}
+    name: {{ include "wasabi-s3-operator.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
 

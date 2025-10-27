@@ -1,4 +1,4 @@
-# Wasabi S3 Provider Operator
+# Wasabi S3 Operator
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
 [![License](https://img.shields.io/badge/license-Unlicense-lightgrey.svg)](LICENSE)
@@ -7,7 +7,7 @@ A Kubernetes operator for managing Wasabi S3 storage using the [Kopf](https://ko
 
 ## 🎯 Overview
 
-The Wasabi S3 Provider Operator brings declarative S3 bucket management directly into your Kubernetes workflows. It enables you to:
+The Wasabi S3 Operator brings declarative S3 bucket management directly into your Kubernetes workflows. It enables you to:
 
 - **Manage Wasabi S3 buckets** through Kubernetes CRDs
 - **Configure bucket policies** with IAM-style policy documents
@@ -56,8 +56,8 @@ The Wasabi S3 Provider Operator brings declarative S3 bucket management directly
 Install the operator using Helm:
 
 ```bash
-helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
-  --namespace wasabi-s3-provider-system \
+helm install wasabi-s3-operator ./helm/wasabi-s3-operator \
+  --namespace wasabi-s3-operator-system \
   --create-namespace
 ```
 
@@ -251,7 +251,7 @@ Structured JSON logs with fields:
 ```bash
 # Clone repository
 git clone <repository-url>
-cd wasabi-s3-provider
+cd wasabi-s3-operator
 
 # Install dependencies
 pip install -r requirements-dev.txt
@@ -278,7 +278,7 @@ pytest tests/
 │       │   └── aws/              # AWS/Wasabi compatible operations
 │       └── utils/               # Utility functions
 ├── helm/
-│   └── wasabi-s3-provider/
+│   └── wasabi-s3-operator/
 │       ├── crds/                # CRD definitions (not templated)
 │       ├── templates/           # Helm templates for operator deployment
 │       └── values.yaml          # Default Helm values
@@ -362,7 +362,7 @@ This project is licensed under the **Unlicense**.
 
 - **Repository**: `<repository-url>`
 - **Issues**: `<repository-url>/issues`
-- **Helm Chart**: `./helm/wasabi-s3-provider`
+- **Helm Chart**: `./helm/wasabi-s3-operator`
 
 ## 🙏 Acknowledgments
 
@@ -372,7 +372,7 @@ This project is licensed under the **Unlicense**.
 
 ---
 
-**Status:** v1alpha1 — Wasabi S3 Provider
+**Status:** v1alpha1 — Wasabi S3 Operator
 
 This operator is specifically designed for Wasabi S3 storage, providing declarative bucket management, policies, and access key management.
 

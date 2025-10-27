@@ -1,4 +1,4 @@
-"""Prometheus metrics for the Wasabi S3 Provider Operator."""
+"""Prometheus metrics for the Wasabi S3 Operator Operator."""
 
 from prometheus_client import Counter, Histogram
 

@@ -1,21 +1,37 @@
-apiVersion: v1
-kind: Secret
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
 metadata:
   name: wasabi-credentials
-type: Opaque
-stringData:
-  access-key: YOUR_ACCESS_KEY
-  secret-key: YOUR_SECRET_KEY
+  namespace: s3-provider-operator
+spec:
+  secretStoreRef:
+    name: vault
+    kind: ClusterSecretStore
+  target:
+    name: wasabi-credentials
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: access-key
+      remoteRef:
+        key: kv/data/s3-provider-operator/wasabi-credentials
+        property: access-key
+    - secretKey: secret-key
+      remoteRef:
+        key: kv/data/s3-provider-operator/wasabi-credentials
+        property: secret-key
 ---
 apiVersion: s3.cloud37.dev/v1alpha1
 kind: Provider
 metadata:
-  name: wasabi-us-east-1
+  name: wasabi-eu-central-2
+  namespace: s3-provider-operator
 spec:
   type: wasabi
-  endpoint: https://s3.wasabisys.com
+  endpoint: https://s3.eu-central-2.wasabisys.com
   iamEndpoint: https://iam.wasabisys.com
-  region: us-east-1
+  iamRegion: us-east-1  # Wasabi IAM requires us-east-1 region
+  region: eu-central-2
   auth:
     accessKeySecretRef:
       name: wasabi-credentials

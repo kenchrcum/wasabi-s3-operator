@@ -1,4 +1,4 @@
-"""Main entry point for the Wasabi S3 Provider Operator."""
+"""Main entry point for the Wasabi S3 Operator Operator."""
 
 from __future__ import annotations
 
@@ -372,7 +372,7 @@ def handle_bucket(
                                 "providerRef": {"name": provider_name},
                                 "name": user_name,
                                 "policy": user_policy,
-                                "tags": {"ManagedBy": "wasabi-s3-provider", "Bucket": bucket_name},
+                                "tags": {"ManagedBy": "wasabi-s3-operator", "Bucket": bucket_name},
                             },
                         }
                         logger.info(f"Creating User CRD {user_crd_name} with policy: {user_policy}")

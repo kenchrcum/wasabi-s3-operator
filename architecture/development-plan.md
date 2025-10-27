@@ -19,7 +19,7 @@ This document defines a step-by-step plan to build a Kubernetes Operator for man
 - CRDs are structural with defaults, validation, and `status` subresource enabled
 - Use Conditions with `type`, `status`, `reason`, `message`, `lastTransitionTime`
 - Use OwnerReferences for derived resources; use Finalizers for cleanup
-- Server-Side Apply with a single field manager (e.g., `wasabi-s3-provider`) to manage owned fields
+- Server-Side Apply with a single field manager (e.g., `wasabi-s3-operator`) to manage owned fields
 
 ## Phase 2: CRDs (Custom Resource Definitions)
 

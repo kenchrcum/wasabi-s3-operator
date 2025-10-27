@@ -2,17 +2,17 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "wasabi-s3-provider.fullname" . }}
+  name: {{ include "wasabi-s3-operator.fullname" . }}
   namespace: {{ .Values.serviceMonitor.namespace | default .Release.Namespace }}
   labels:
-    {{- include "wasabi-s3-provider.labels" . | nindent 4 }}
+    {{- include "wasabi-s3-operator.labels" . | nindent 4 }}
     {{- with .Values.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "wasabi-s3-provider.selectorLabels" . | nindent 6 }}
+      {{- include "wasabi-s3-operator.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       interval: {{ .Values.serviceMonitor.interval }}

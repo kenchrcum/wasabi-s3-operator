@@ -1,6 +1,6 @@
-# Wasabi S3 Provider Quick Start
+# Wasabi S3 Operator Quick Start
 
-Get the Wasabi S3 Provider Operator up and running in minutes!
+Get the Wasabi S3 Operator Operator up and running in minutes!
 
 ## Prerequisites
 
@@ -22,19 +22,19 @@ Get the Wasabi S3 Provider Operator up and running in minutes!
 
 ```bash
 # 1. Build the image
-docker build -t kenchrcum/wasabi-s3-provider:latest .
+docker build -t kenchrcum/wasabi-s3-operator:latest .
 
 # 2. Push to registry (optional)
-docker push kenchrcum/wasabi-s3-provider:latest
+docker push kenchrcum/wasabi-s3-operator:latest
 
 # 3. Install with Helm
-helm install wasabi-s3-provider ./helm/wasabi-s3-provider \
-  --namespace wasabi-s3-provider-system \
+helm install wasabi-s3-operator ./helm/wasabi-s3-operator \
+  --namespace wasabi-s3-operator-system \
   --create-namespace \
-  --set image.repository=kenchrcum/wasabi-s3-provider
+  --set image.repository=kenchrcum/wasabi-s3-operator
 
 # 4. Verify
-kubectl get pods -n wasabi-s3-provider-system
+kubectl get pods -n wasabi-s3-operator-system
 ```
 
 ## Create Your First Resources
@@ -88,7 +88,7 @@ kubectl get secret application-key-credentials -o jsonpath='{.data.access-key-id
 watch kubectl get providers,buckets,bucketpolicies,accesskeys
 
 # Check operator logs
-kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider -f
+kubectl logs -n wasabi-s3-operator-system -l app.kubernetes.io/name=wasabi-s3-operator -f
 
 # View events
 kubectl get events --sort-by='.lastTimestamp'
@@ -99,7 +99,7 @@ kubectl get events --sort-by='.lastTimestamp'
 ### Operator Not Running
 
 ```bash
-kubectl logs -n wasabi-s3-provider-system -l app.kubernetes.io/name=wasabi-s3-provider
+kubectl logs -n wasabi-s3-operator-system -l app.kubernetes.io/name=wasabi-s3-operator
 ```
 
 ### Provider Not Ready
@@ -122,7 +122,7 @@ kubectl get events --field-selector involvedObject.kind=Bucket
 kubectl delete -f examples/
 
 # Uninstall operator
-helm uninstall wasabi-s3-provider --namespace wasabi-s3-provider-system
+helm uninstall wasabi-s3-operator --namespace wasabi-s3-operator-system
 ```
 
 ## Next Steps
