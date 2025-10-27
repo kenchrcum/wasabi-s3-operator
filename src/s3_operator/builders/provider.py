@@ -69,6 +69,7 @@ def create_provider_from_spec(
     endpoint = spec.get("endpoint")
     region = spec.get("region")
     path_style = spec.get("pathStyle", True)
+    iam_endpoint = spec.get("iamEndpoint")
 
     if not endpoint or not region:
         raise ValueError("endpoint and region are required")
@@ -84,6 +85,7 @@ def create_provider_from_spec(
             session_token=session_token,
             path_style=path_style,
             insecure_skip_verify=insecure_skip_verify,
+            iam_endpoint=iam_endpoint,
         )
     else:
         raise ValueError(f"Unsupported provider type: {provider_type}")

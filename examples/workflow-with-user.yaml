@@ -1,0 +1,106 @@
+# Complete workflow: User -> Bucket -> Policy -> AccessKey
+
+# Step 1: Create a Provider with IAM endpoint (Wasabi)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wasabi-credentials
+type: Opaque
+stringData:
+  access-key: YOUR_ACCESS_KEY
+  secret-key: YOUR_SECRET_KEY
+---
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Provider
+metadata:
+  name: wasabi-us-east-1
+spec:
+  type: wasabi
+  endpoint: https://s3.wasabisys.com
+  iamEndpoint: https://iam.wasabisys.com
+  region: us-east-1
+  auth:
+    accessKeySecretRef:
+      name: wasabi-credentials
+      key: access-key
+    secretKeySecretRef:
+      name: wasabi-credentials
+      key: secret-key
+  pathStyle: true
+
+---
+# Step 2: Create a User
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: User
+metadata:
+  name: my-app-user
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: my-app-user
+  tags:
+    Environment: production
+    Application: my-app
+
+---
+# Step 3: Create a Bucket with User reference
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: my-app-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  userRef:
+    name: my-app-user
+  name: my-app-bucket
+  versioning:
+    enabled: true
+  encryption:
+    enabled: true
+    algorithm: AES256
+
+---
+# Step 4: Create a Bucket Policy for the User
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: BucketPolicy
+metadata:
+  name: my-app-bucket-policy
+spec:
+  bucketRef:
+    name: my-app-bucket
+  policy:
+    version: "2012-10-17"
+    statement:
+      - sid: AllowUserAccess
+        effect: Allow
+        principal: "arn:aws:iam::wasabi:user/my-app-user"
+        action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+          - s3:ListBucket
+        resource:
+          - "arn:aws:s3:::my-app-bucket"
+          - "arn:aws:s3:::my-app-bucket/*"
+
+---
+# Step 5: Create Access Keys for the User
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: AccessKey
+metadata:
+  name: my-app-access-key
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  userRef:
+    name: my-app-user
+  displayName: My Application Access Key
+  tags:
+    Environment: production
+    Application: my-app
+  rotate:
+    enabled: true
+    intervalDays: 90
+    previousKeysRetentionDays: 7
+

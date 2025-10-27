@@ -26,6 +26,38 @@ spec:
                       type: string
                     namespace:
                       type: string
+                autoManage:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Automatically create User, BucketPolicy, and AccessKey
+                    userName:
+                      type: string
+                      description: Name for the auto-created user (defaults to bucket name)
+                    accessLevel:
+                      type: string
+                      enum: [readonly, readwrite, full]
+                      default: readwrite
+                      description: Access level for the auto-created user
+                    rotation:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        intervalDays:
+                          type: integer
+                          default: 90
+                          minimum: 1
+                          maximum: 365
+                        previousKeysRetentionDays:
+                          type: integer
+                          default: 7
+                          minimum: 0
+                          maximum: 30
+                  description: Automatic resource management configuration
                 name:
                   type: string
                   pattern: '^[a-z0-9][a-z0-9\-\.]{1,61}[a-z0-9]$'
@@ -159,6 +191,9 @@ spec:
                   type: array
                   items:
                     type: object
+                credentialsSecret:
+                  type: string
+                  description: Name of the secret containing bucket access credentials
       subresources:
         status: {}
   scope: Namespaced

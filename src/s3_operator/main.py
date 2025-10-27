@@ -19,6 +19,7 @@ from .constants import (
     KIND_BUCKET,
     KIND_BUCKET_POLICY,
     KIND_PROVIDER,
+    KIND_USER,
 )
 from .utils.conditions import (
     set_apply_failed_condition,
@@ -297,6 +298,185 @@ def handle_bucket(
             emit_bucket_updated(meta, bucket_name)
             logger.info(f"Bucket {bucket_name} already exists")
 
+        # Handle auto-management if enabled
+        auto_manage = spec.get("autoManage", {})
+        auto_manage_enabled = auto_manage.get("enabled", True)
+        
+        if auto_manage_enabled:
+            try:
+                # Determine user name
+                user_name = auto_manage.get("userName", bucket_name)
+                access_level = auto_manage.get("accessLevel", "readwrite")
+                
+                # Step 1: Create User
+                user_crd_name = f"{name}-user"
+                try:
+                    # Check if user already exists
+                    try:
+                        existing_user = api.get_namespaced_custom_object(
+                            group="s3.cloud37.dev",
+                            version="v1alpha1",
+                            namespace=namespace,
+                            plural="users",
+                            name=user_crd_name,
+                        )
+                        logger.info(f"User {user_crd_name} already exists")
+                    except client.exceptions.ApiException as e:
+                        if e.status == 404:
+                            # Create user
+                            import json
+                            user_body = {
+                                "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                "kind": "User",
+                                "metadata": {
+                                    "name": user_crd_name,
+                                    "namespace": namespace,
+                                    "ownerReferences": [
+                                        {
+                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                            "kind": "Bucket",
+                                            "name": name,
+                                            "uid": meta.get("uid"),
+                                            "controller": True,
+                                        }
+                                    ],
+                                },
+                                "spec": {
+                                    "providerRef": {"name": provider_name},
+                                    "name": user_name,
+                                    "tags": {"ManagedBy": "s3-operator", "Bucket": bucket_name},
+                                },
+                            }
+                            api.create_namespaced_custom_object(
+                                group="s3.cloud37.dev",
+                                version="v1alpha1",
+                                namespace=namespace,
+                                plural="users",
+                                body=user_body,
+                            )
+                            logger.info(f"Created user {user_crd_name}")
+                        else:
+                            raise
+                
+                    # Step 2: Create BucketPolicy
+                    policy_crd_name = f"{name}-policy"
+                    try:
+                        existing_policy = api.get_namespaced_custom_object(
+                            group="s3.cloud37.dev",
+                            version="v1alpha1",
+                            namespace=namespace,
+                            plural="bucketpolicies",
+                            name=policy_crd_name,
+                        )
+                        logger.info(f"BucketPolicy {policy_crd_name} already exists")
+                    except client.exceptions.ApiException as e:
+                        if e.status == 404:
+                            # Determine actions based on access level
+                            actions = []
+                            if access_level == "readonly":
+                                actions = ["s3:GetObject", "s3:ListBucket"]
+                            elif access_level == "readwrite":
+                                actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+                            else:  # full
+                                actions = ["s3:*"]
+                            
+                            policy_body = {
+                                "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                "kind": "BucketPolicy",
+                                "metadata": {
+                                    "name": policy_crd_name,
+                                    "namespace": namespace,
+                                    "ownerReferences": [
+                                        {
+                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                            "kind": "Bucket",
+                                            "name": name,
+                                            "uid": meta.get("uid"),
+                                            "controller": True,
+                                        }
+                                    ],
+                                },
+                                "spec": {
+                                    "bucketRef": {"name": name},
+                                    "policy": {
+                                        "version": "2012-10-17",
+                                        "statement": [
+                                            {
+                                                "effect": "Allow",
+                                                "principal": f"arn:aws:iam::wasabi:user/{user_name}",
+                                                "action": actions,
+                                                "resource": [
+                                                    f"arn:aws:s3:::{bucket_name}",
+                                                    f"arn:aws:s3:::{bucket_name}/*",
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                },
+                            }
+                            api.create_namespaced_custom_object(
+                                group="s3.cloud37.dev",
+                                version="v1alpha1",
+                                namespace=namespace,
+                                plural="bucketpolicies",
+                                body=policy_body,
+                            )
+                            logger.info(f"Created bucket policy {policy_crd_name}")
+                        else:
+                            raise
+                    
+                    # Step 3: Create AccessKey
+                    accesskey_crd_name = f"{name}-accesskey"
+                    try:
+                        existing_key = api.get_namespaced_custom_object(
+                            group="s3.cloud37.dev",
+                            version="v1alpha1",
+                            namespace=namespace,
+                            plural="accesskeys",
+                            name=accesskey_crd_name,
+                        )
+                        logger.info(f"AccessKey {accesskey_crd_name} already exists")
+                    except client.exceptions.ApiException as e:
+                        if e.status == 404:
+                            rotation_config = auto_manage.get("rotation", {})
+                            accesskey_body = {
+                                "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                "kind": "AccessKey",
+                                "metadata": {
+                                    "name": accesskey_crd_name,
+                                    "namespace": namespace,
+                                    "ownerReferences": [
+                                        {
+                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                            "kind": "Bucket",
+                                            "name": name,
+                                            "uid": meta.get("uid"),
+                                            "controller": True,
+                                        }
+                                    ],
+                                },
+                                "spec": {
+                                    "providerRef": {"name": provider_name},
+                                    "userRef": {"name": user_crd_name},
+                                    "displayName": f"Access key for bucket {bucket_name}",
+                                    "rotate": rotation_config,
+                                },
+                            }
+                            api.create_namespaced_custom_object(
+                                group="s3.cloud37.dev",
+                                version="v1alpha1",
+                                namespace=namespace,
+                                plural="accesskeys",
+                                body=accesskey_body,
+                            )
+                            logger.info(f"Created access key {accesskey_crd_name}")
+                        else:
+                            raise
+                
+                except Exception as e:
+                    logger.error(f"Failed to auto-manage resources for bucket {bucket_name}: {e}")
+                    # Don't fail bucket creation if auto-management fails
+
         # Set ready condition
         conditions = set_ready_condition(conditions, True, f"Bucket {bucket_name} is ready")
 
@@ -308,6 +488,11 @@ def handle_bucket(
             "lastSyncTime": datetime.now(timezone.utc).isoformat(),
             "conditions": conditions,
         }
+        
+        # Add credentials secret reference if auto-management is enabled
+        if auto_manage_enabled:
+            accesskey_crd_name = f"{name}-accesskey"
+            status_update["credentialsSecret"] = f"{accesskey_crd_name}-credentials"
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET, result="success").inc()
         return status_update
@@ -708,65 +893,124 @@ def handle_access_key(
         provider_spec = provider_obj.get("spec", {})
         provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
 
+        # Check if userRef is provided
+        user_ref = spec.get("userRef", {})
+        user_name = user_ref.get("name")
+        
+        if not user_name:
+            error_msg = "userRef.name is required for creating access keys"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
+            raise ValueError(error_msg)
+
+        # Get user
+        try:
+            user_ns = user_ref.get("namespace", namespace)
+            user_obj = api.get_namespaced_custom_object(
+                group="s3.cloud37.dev",
+                version="v1alpha1",
+                namespace=user_ns,
+                plural="users",
+                name=user_name,
+            )
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                error_msg = f"User {user_name} not found"
+                logger.error(error_msg)
+                conditions = status.get("conditions", [])
+                conditions = set_provider_not_ready_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
+                return {
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                }
+            raise
+
+        # Check if user is ready
+        user_status = user_obj.get("status", {})
+        user_conditions = user_status.get("conditions", [])
+        user_ready = any(
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in user_conditions
+        )
+
+        if not user_ready:
+            error_msg = f"User {user_name} is not ready"
+            logger.warning(error_msg)
+            conditions = status.get("conditions", [])
+            conditions = set_provider_not_ready_condition(conditions, error_msg)
+            emit_reconcile_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
+            return {
+                "conditions": conditions,
+                "observedGeneration": meta.get("generation", 0),
+            }
+
         # Check if access key already exists
         existing_key_id = status.get("accessKeyId")
         conditions = status.get("conditions", [])
 
         if not existing_key_id:
-            # Generate new access key
-            # Note: In a real implementation, this would call the provider's API
-            # For now, we'll simulate key generation
-            from ..utils.access_keys import (
-                create_access_key_secret,
-                generate_access_key_id,
-                generate_secret_access_key,
-            )
-
-            access_key_id = generate_access_key_id()
-            secret_access_key = generate_secret_access_key()
-
-            # Create Kubernetes secret
-            secret_name = f"{name}-credentials"
+            # Create access key for the user via IAM
             try:
-                core_api = client.CoreV1Api()
-                create_access_key_secret(
-                    core_api,
-                    namespace,
-                    secret_name,
-                    access_key_id,
-                    secret_access_key,
-                    owner_references=[
-                        {
-                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                            "kind": "AccessKey",
-                            "name": name,
-                            "uid": meta.get("uid"),
-                            "controller": True,
-                        }
-                    ],
-                )
-                emit_access_key_created(meta, access_key_id)
-                logger.info(f"Created access key {access_key_id}")
-            except client.exceptions.ApiException as e:
-                if e.status == 409:
-                    # Secret already exists, read it
-                    logger.info(f"Secret {secret_name} already exists")
-                else:
-                    raise
+                from ..utils.access_keys import create_access_key_secret
 
-            # Set ready condition
-            conditions = set_ready_condition(conditions, True, f"Access key {access_key_id} created")
+                key_response = provider_client.create_access_key(user_name)
+                access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
+                secret_access_key = key_response.get("AccessKey", {}).get("SecretAccessKey")
 
-            # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
-                "accessKeyId": access_key_id,
-                "created": True,
-                "conditions": conditions,
-            }
+                # Create Kubernetes secret
+                secret_name = f"{name}-credentials"
+                try:
+                    core_api = client.CoreV1Api()
+                    create_access_key_secret(
+                        core_api,
+                        namespace,
+                        secret_name,
+                        access_key_id,
+                        secret_access_key,
+                        owner_references=[
+                            {
+                                "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                "kind": "AccessKey",
+                                "name": name,
+                                "uid": meta.get("uid"),
+                                "controller": True,
+                            }
+                        ],
+                    )
+                    emit_access_key_created(meta, access_key_id)
+                    logger.info(f"Created access key {access_key_id} for user {user_name}")
+                except client.exceptions.ApiException as e:
+                    if e.status == 409:
+                        # Secret already exists, read it
+                        logger.info(f"Secret {secret_name} already exists")
+                    else:
+                        raise
 
-            metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
-            return status_update
+                # Set ready condition
+                conditions = set_ready_condition(conditions, True, f"Access key {access_key_id} created for user {user_name}")
+
+                # Update status
+                status_update = {
+                    "observedGeneration": meta.get("generation", 0),
+                    "accessKeyId": access_key_id,
+                    "created": True,
+                    "conditions": conditions,
+                }
+
+                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
+                return status_update
+            except Exception as e:
+                error_msg = f"Failed to create access key: {str(e)}"
+                logger.error(error_msg)
+                conditions = set_creation_failed_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
+                return {
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                }
         else:
             # Access key already exists
             logger.info(f"Access key {existing_key_id} already exists")
@@ -805,4 +1049,208 @@ def handle_access_key_delete(
 
     # Secret will be deleted via owner reference
     # In a real implementation, we would also revoke the key from the provider
+
+
+@kopf.on.create(API_GROUP_VERSION, KIND_USER)
+@kopf.on.update(API_GROUP_VERSION, KIND_USER)
+@kopf.on.resume(API_GROUP_VERSION, KIND_USER)
+def handle_user(
+    spec: dict[str, Any],
+    meta: dict[str, Any],
+    status: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Handle User resource reconciliation."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    namespace = meta.get("namespace", "default")
+    name = meta.get("name", "unknown")
+
+    emit_reconcile_started(meta)
+    metrics.reconcile_total.labels(kind=KIND_USER, result="started").inc()
+
+    try:
+        # Validate spec
+        provider_ref = spec.get("providerRef", {})
+        provider_name = provider_ref.get("name")
+        user_name = spec.get("name")
+
+        if not provider_name:
+            error_msg = "providerRef.name is required"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+            raise ValueError(error_msg)
+
+        if not user_name:
+            error_msg = "user name is required"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+            raise ValueError(error_msg)
+
+        emit_validate_succeeded(meta)
+
+        # Get provider
+        from kubernetes import client, config
+
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+
+        api = client.CustomObjectsApi()
+        provider_ns = provider_ref.get("namespace", namespace)
+
+        try:
+            provider_obj = api.get_namespaced_custom_object(
+                group="s3.cloud37.dev",
+                version="v1alpha1",
+                namespace=provider_ns,
+                plural="providers",
+                name=provider_name,
+            )
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                error_msg = f"Provider {provider_name} not found"
+                logger.error(error_msg)
+                conditions = status.get("conditions", [])
+                conditions = set_provider_not_ready_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                return {
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                }
+            raise
+
+        # Check if provider is ready
+        provider_status = provider_obj.get("status", {})
+        provider_conditions = provider_status.get("conditions", [])
+        provider_ready = any(
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
+        )
+
+        if not provider_ready:
+            error_msg = f"Provider {provider_name} is not ready"
+            logger.warning(error_msg)
+            conditions = status.get("conditions", [])
+            conditions = set_provider_not_ready_condition(conditions, error_msg)
+            emit_reconcile_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+            return {
+                "conditions": conditions,
+                "observedGeneration": meta.get("generation", 0),
+            }
+
+        # Create provider client
+        provider_spec = provider_obj.get("spec", {})
+        provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
+
+        # Check if user already exists
+        existing_user_id = status.get("userId")
+        conditions = status.get("conditions", [])
+
+        if not existing_user_id:
+            # Create user in IAM
+            try:
+                policy = spec.get("policy")
+                user_response = provider_client.create_user(user_name, policy)
+                user_id = user_response.get("User", {}).get("UserId")
+                
+                conditions = set_ready_condition(conditions, True, f"User {user_name} created")
+                logger.info(f"Created user {user_name} with ID {user_id}")
+            except Exception as e:
+                error_msg = f"Failed to create user: {str(e)}"
+                logger.error(error_msg)
+                conditions = set_creation_failed_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                return {
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                }
+
+            # Update status
+            status_update = {
+                "observedGeneration": meta.get("generation", 0),
+                "userId": user_id,
+                "created": True,
+                "lastSyncTime": datetime.now(timezone.utc).isoformat(),
+                "conditions": conditions,
+            }
+
+            metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
+            return status_update
+        else:
+            # User already exists
+            logger.info(f"User {user_name} already exists")
+            conditions = set_ready_condition(conditions, True, f"User {user_name} is ready")
+
+            status_update = {
+                "observedGeneration": meta.get("generation", 0),
+                "userId": existing_user_id,
+                "created": True,
+                "conditions": conditions,
+            }
+
+            metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
+            return status_update
+
+    except Exception as e:
+        logger.error(f"User reconciliation failed for {name}: {e}")
+        emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
+        metrics.reconcile_total.labels(kind=KIND_USER, result="error").inc()
+        raise
+
+
+@kopf.on.delete(API_GROUP_VERSION, KIND_USER)
+def handle_user_delete(
+    spec: dict[str, Any],
+    meta: dict[str, Any],
+    **kwargs: Any,
+) -> None:
+    """Handle User resource deletion."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    name = meta.get("name", "unknown")
+    user_name = spec.get("name")
+
+    logger.info(f"User {name} is being deleted")
+
+    if user_name:
+        try:
+            # Get provider
+            provider_ref = spec.get("providerRef", {})
+            provider_name = provider_ref.get("name")
+
+            if provider_name:
+                from kubernetes import client, config
+
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+
+                api = client.CustomObjectsApi()
+                namespace = meta.get("namespace", "default")
+                provider_ns = provider_ref.get("namespace", namespace)
+
+                provider_obj = api.get_namespaced_custom_object(
+                    group="s3.cloud37.dev",
+                    version="v1alpha1",
+                    namespace=provider_ns,
+                    plural="providers",
+                    name=provider_name,
+                )
+
+                provider_spec = provider_obj.get("spec", {})
+                provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
+
+                # Delete user
+                provider_client.delete_user(user_name)
+                logger.info(f"Deleted user {user_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete user {user_name}: {e}")
+            # Don't fail deletion if cleanup fails
 

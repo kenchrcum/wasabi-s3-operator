@@ -9,6 +9,7 @@ KIND_PROVIDER = "Provider"
 KIND_BUCKET = "Bucket"
 KIND_BUCKET_POLICY = "BucketPolicy"
 KIND_ACCESS_KEY = "AccessKey"
+KIND_USER = "User"
 
 # Labels
 LABEL_MANAGED_BY = f"{API_GROUP}/managed-by"

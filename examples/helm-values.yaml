@@ -1,0 +1,83 @@
+# Default values for s3-operator
+replicaCount: 1
+
+image:
+  repository: kenchrcum/s3-provider-operator
+  pullPolicy: Always
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+operator:
+  # Watch scope: namespaced or cluster
+  watchScope: cluster
+  
+  # Log level
+  logLevel: INFO
+  
+  # Metrics port
+  metricsPort: 8080
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use
+  name: ""
+
+rbac:
+  # Specifies whether RBAC resources should be created
+  create: true
+  # RBAC preset: minimal, scoped, or full
+  preset: minimal
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Container security context
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+
+# ServiceMonitor for Prometheus
+serviceMonitor:
+  enabled: true
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+# Additional labels
+labels: {}
+
+# Additional annotations
+annotations: {}
+

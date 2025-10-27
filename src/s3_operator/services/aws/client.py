@@ -26,6 +26,7 @@ class AWSProvider:
         session_token: str | None = None,
         path_style: bool = True,
         insecure_skip_verify: bool = False,
+        iam_endpoint: str | None = None,
     ) -> None:
         """Initialize AWS S3 provider.
 
@@ -37,10 +38,12 @@ class AWSProvider:
             session_token: Optional session token for temporary credentials
             path_style: Use path-style addressing
             insecure_skip_verify: Skip TLS verification
+            iam_endpoint: Optional IAM endpoint URL for user management
         """
         self.endpoint = endpoint
         self.region = region
         self.path_style = path_style
+        self.iam_endpoint = iam_endpoint
 
         # Configure boto3 client
         config = boto3.session.Config(
@@ -66,6 +69,20 @@ class AWSProvider:
             config=config,
             verify=not insecure_skip_verify,
         )
+        
+        # Initialize IAM client if endpoint is provided
+        self.iam_client = None
+        if iam_endpoint:
+            self.iam_client = boto3.client(
+                "iam",
+                endpoint_url=iam_endpoint,
+                region_name=region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token,
+                config=config,
+                verify=not insecure_skip_verify,
+            )
 
     def list_buckets(self) -> list[str]:
         """List all buckets."""
@@ -250,4 +267,83 @@ class AWSProvider:
         except Exception as e:
             logger.error(f"Connectivity test failed: {e}")
             return False
+    
+    def create_user(self, name: str, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Create an IAM user.
+        
+        Args:
+            name: User name
+            policy: Optional inline policy document
+            
+        Returns:
+            User creation response
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            response = self.iam_client.create_user(UserName=name)
+            
+            if policy:
+                import json
+                self.iam_client.put_user_policy(
+                    UserName=name,
+                    PolicyName=f"{name}-policy",
+                    PolicyDocument=json.dumps(policy),
+                )
+            
+            return response
+        except ClientError as e:
+            logger.error(f"Failed to create user {name}: {e}")
+            raise
+    
+    def delete_user(self, name: str) -> None:
+        """Delete an IAM user.
+        
+        Args:
+            name: User name
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            self.iam_client.delete_user(UserName=name)
+        except ClientError as e:
+            logger.error(f"Failed to delete user {name}: {e}")
+            raise
+    
+    def create_access_key(self, user_name: str) -> dict[str, Any]:
+        """Create access keys for a user.
+        
+        Args:
+            user_name: User name
+            
+        Returns:
+            Access key creation response
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            response = self.iam_client.create_access_key(UserName=user_name)
+            return response
+        except ClientError as e:
+            logger.error(f"Failed to create access key for user {user_name}: {e}")
+            raise
+    
+    def delete_access_key(self, user_name: str, access_key_id: str) -> None:
+        """Delete an access key.
+        
+        Args:
+            user_name: User name
+            access_key_id: Access key ID to delete
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            self.iam_client.delete_access_key(UserName=user_name, AccessKeyId=access_key_id)
+        except ClientError as e:
+            logger.error(f"Failed to delete access key {access_key_id}: {e}")
+            raise
 

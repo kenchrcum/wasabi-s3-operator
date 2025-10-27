@@ -86,6 +86,10 @@ spec:
                 pathStyle:
                   type: boolean
                   default: true
+                iamEndpoint:
+                  type: string
+                  format: uri
+                  description: IAM endpoint URL (required for user management, e.g., https://iam.wasabisys.com)
                 retry:
                   type: object
                   properties:

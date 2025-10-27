@@ -1,0 +1,68 @@
+# Simple bucket creation with automatic user, policy, and access key management
+# Only one resource needs to be created!
+
+# Step 1: Create Provider with IAM endpoint
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wasabi-credentials
+type: Opaque
+stringData:
+  access-key: YOUR_ACCESS_KEY
+  secret-key: YOUR_SECRET_KEY
+---
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Provider
+metadata:
+  name: wasabi-us-east-1
+spec:
+  type: wasabi
+  endpoint: https://s3.wasabisys.com
+  iamEndpoint: https://iam.wasabisys.com
+  region: us-east-1
+  auth:
+    accessKeySecretRef:
+      name: wasabi-credentials
+      key: access-key
+    secretKeySecretRef:
+      name: wasabi-credentials
+      key: secret-key
+  pathStyle: true
+
+---
+# Step 2: Create Bucket (everything else happens automatically!)
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: my-app-storage
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: my-app-storage
+  autoManage:
+    enabled: true
+    userName: my-app-storage-user
+    accessLevel: readwrite  # readonly, readwrite, or full
+    rotation:
+      enabled: true
+      intervalDays: 90
+      previousKeysRetentionDays: 7
+  versioning:
+    enabled: true
+  encryption:
+    enabled: true
+    algorithm: AES256
+
+---
+# That's it! The operator will automatically create:
+# - User: my-app-storage-user
+# - BucketPolicy: grants the user access to the bucket
+# - AccessKey: creates keys for the user
+# - Secret: my-app-storage-accesskey-credentials
+
+# To get credentials:
+# kubectl get secret my-app-storage-accesskey-credentials \
+#   -o jsonpath='{.data.access-key-id}' | base64 -d
+# kubectl get secret my-app-storage-accesskey-credentials \
+#   -o jsonpath='{.data.secret-access-key}' | base64 -d
+
