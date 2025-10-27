@@ -321,6 +321,7 @@ pre-commit run --all-files
 ## 📖 Documentation
 
 ### Core Documentation
+- [Development Status](./architecture/STATUS.md) - Current development status and next steps
 - [Development Plan](./architecture/development-plan.md) - Comprehensive architectural documentation
 - [CRD Specifications](./architecture/crd-specifications.md) - Detailed CRD schemas and specifications
 

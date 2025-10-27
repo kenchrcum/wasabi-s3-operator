@@ -128,6 +128,6 @@ helm uninstall s3-operator --namespace s3-operator-system
 ## Next Steps
 
 - Read the [Deployment Guide](./DEPLOYMENT.md) for detailed instructions
-- Explore [Architecture Documentation](./architecture/development-plan.md)
-- Check [CRD Specifications](./architecture/crd-specifications.md)
+- Check [Development Status](./architecture/STATUS.md) for current progress
+- Explore [CRD Specifications](./architecture/crd-specifications.md)
 

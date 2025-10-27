@@ -43,8 +43,8 @@ Install the operator using Helm:
 kubectl create namespace s3-operator-system
 
 # Install the operator
-helm install s3-operator ./helm/s3-operator \
-  --namespace s3-operator-system \
+helm install s3-provider-operator ./helm/s3-operator \
+  --namespace s3-provider-operator \
   --set image.repository=kenchrcum/s3-provider-operator \
   --set image.tag=latest
 ```
@@ -264,8 +264,8 @@ kubectl proxy
 
 ## Next Steps
 
-- Read the [Architecture Documentation](./architecture/development-plan.md)
+- Read the [Development Status](./architecture/STATUS.md)
 - Explore [CRD Specifications](./architecture/crd-specifications.md)
 - Check [Examples](./examples/) for more use cases
-- Review [Testing Strategy](./.cursor/rules/testing-strategy.mdc)
+- Review [Development Plan](./architecture/development-plan.md)
 
