@@ -14,6 +14,7 @@ metadata:
 spec:
   type: wasabi
   endpoint: https://s3.wasabisys.com
+  iamEndpoint: https://iam.wasabisys.com
   region: us-east-1
   auth:
     accessKeySecretRef:
