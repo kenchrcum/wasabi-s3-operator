@@ -1,0 +1,25 @@
+apiVersion: v1
+entries:
+  wasabi-s3-operator:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-10-27T22:03:17.190600474Z"
+    description: A Helm chart for the Wasabi S3 Operator Operator
+    digest: 218175efaee9b447477b37d3d9153e054c6508a6a4168cb1b04241f30f0dad40
+    home: https://github.com/kenchrcum/wasabi-s3-operator
+    keywords:
+    - s3
+    - wasabi
+    - operator
+    - kubernetes
+    - storage
+    maintainers:
+    - name: kenchrcum
+    name: wasabi-s3-operator
+    sources:
+    - https://github.com/kenchrcum/wasabi-s3-operator
+    type: application
+    urls:
+    - https://github.com/kenchrcum/wasabi-s3-operator/releases/download/wasabi-s3-operator-0.1.0/wasabi-s3-operator-0.1.0.tgz
+    version: 0.1.0
+generated: "2025-10-27T22:03:17.190606716Z"
