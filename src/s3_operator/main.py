@@ -252,7 +252,7 @@ def handle_bucket(
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -266,6 +266,7 @@ def handle_bucket(
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
             })
+            raise kopf.TemporaryError(error_msg)
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -310,9 +311,9 @@ def handle_bucket(
                 user_name = auto_manage.get("userName", bucket_name)
                 access_level = auto_manage.get("accessLevel", "readwrite")
                 
-                # Step 1: Create User with inline policy
+                # Step 1: Create User with inline IAM policy
                 user_crd_name = f"{name}-user"
-                
+
                 # Determine actions based on access level for inline policy
                 actions = []
                 if access_level == "readonly":
@@ -321,7 +322,7 @@ def handle_bucket(
                     actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
                 else:  # full
                     actions = ["s3:*"]
-                
+
                 # Create inline IAM policy for the user
                 user_policy = {
                     "version": "2012-10-17",
@@ -336,7 +337,7 @@ def handle_bucket(
                         }
                     ],
                 }
-                
+
                 # Check if user already exists
                 try:
                     existing_user = api.get_namespaced_custom_object(
@@ -374,6 +375,7 @@ def handle_bucket(
                                 "tags": {"ManagedBy": "s3-operator", "Bucket": bucket_name},
                             },
                         }
+                        logger.info(f"Creating User CRD {user_crd_name} with policy: {user_policy}")
                         api.create_namespaced_custom_object(
                             group="s3.cloud37.dev",
                             version="v1alpha1",
@@ -430,6 +432,70 @@ def handle_bucket(
                             body=accesskey_body,
                         )
                         logger.info(f"Created access key {accesskey_crd_name}")
+                    else:
+                        raise
+                
+                # Step 3: Create BucketPolicy to grant user access to bucket
+                bucketpolicy_crd_name = f"{name}-policy"
+                try:
+                    existing_policy = api.get_namespaced_custom_object(
+                        group="s3.cloud37.dev",
+                        version="v1alpha1",
+                        namespace=namespace,
+                        plural="bucketpolicies",
+                        name=bucketpolicy_crd_name,
+                    )
+                    logger.info(f"BucketPolicy {bucketpolicy_crd_name} already exists")
+                except client.exceptions.ApiException as e:
+                    if e.status == 404:
+                        # Create bucket policy that allows the user to access the bucket
+                        # Use the IAM user name (not CRD name) in the ARN
+                        user_arn = f"arn:aws:iam::*:user/{user_name}"
+                        
+                        bucketpolicy_body = {
+                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                            "kind": "BucketPolicy",
+                            "metadata": {
+                                "name": bucketpolicy_crd_name,
+                                "namespace": namespace,
+                                "ownerReferences": [
+                                    {
+                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                        "kind": "Bucket",
+                                        "name": name,
+                                        "uid": meta.get("uid"),
+                                        "controller": True,
+                                    }
+                                ],
+                            },
+                            "spec": {
+                                "bucketRef": {"name": name},
+                                "policy": {
+                                    "version": "2012-10-17",
+                                    "statement": [
+                                        {
+                                            "sid": f"Allow{user_name}Access",
+                                            "effect": "Allow",
+                                            "principal": user_arn,
+                                            "action": actions,
+                                            "resource": [
+                                                f"arn:aws:s3:::{bucket_name}",
+                                                f"arn:aws:s3:::{bucket_name}/*",
+                                            ],
+                                        }
+                                    ],
+                                },
+                            },
+                        }
+                        logger.info(f"Creating BucketPolicy {bucketpolicy_crd_name} for user {user_name}")
+                        api.create_namespaced_custom_object(
+                            group="s3.cloud37.dev",
+                            version="v1alpha1",
+                            namespace=namespace,
+                            plural="bucketpolicies",
+                            body=bucketpolicy_body,
+                        )
+                        logger.info(f"Created bucket policy {bucketpolicy_crd_name}")
                     else:
                         raise
             
@@ -535,6 +601,9 @@ def handle_bucket_policy(
     namespace = meta.get("namespace", "default")
     name = meta.get("name", "unknown")
 
+    logger.info(f"Starting bucket policy reconciliation for {name} in namespace {namespace}")
+    logger.info(f"BucketPolicy spec: {spec}")
+
     emit_reconcile_started(meta)
     metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="started").inc()
 
@@ -602,7 +671,7 @@ def handle_bucket_policy(
         bucket_status = bucket_obj.get("status", {})
         bucket_conditions = bucket_status.get("conditions", [])
         bucket_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in bucket_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in bucket_conditions
         )
 
         if not bucket_ready:
@@ -616,6 +685,8 @@ def handle_bucket_policy(
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
             })
+            # Raise exception to trigger retry
+            raise kopf.TemporaryError(error_msg)
 
         # Get bucket spec to find provider
         bucket_spec = bucket_obj.get("spec", {})
@@ -836,7 +907,7 @@ def handle_access_key(
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -850,6 +921,7 @@ def handle_access_key(
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
             })
+            raise kopf.TemporaryError(error_msg)
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -893,7 +965,7 @@ def handle_access_key(
         user_status = user_obj.get("status", {})
         user_conditions = user_status.get("conditions", [])
         user_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in user_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in user_conditions
         )
 
         if not user_ready:
@@ -907,6 +979,8 @@ def handle_access_key(
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
             })
+            # Raise exception to trigger retry
+            raise kopf.TemporaryError(error_msg)
 
         # Get the actual IAM user name from the User CRD spec
         user_spec = user_obj.get("spec", {})
@@ -1096,7 +1170,7 @@ def handle_user(
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -1110,6 +1184,7 @@ def handle_user(
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
             })
+            raise kopf.TemporaryError(error_msg)
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -1123,6 +1198,29 @@ def handle_user(
             # Create user in IAM
             try:
                 policy = spec.get("policy")
+                
+                # If no policy provided, create a default policy allowing access to the bucket
+                if not policy:
+                    # Try to get bucket name from tags or create a basic policy
+                    tags = spec.get("tags", {})
+                    bucket_name = tags.get("Bucket", user_name)
+                    
+                    policy = {
+                        "version": "2012-10-17",
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "action": ["s3:*"],
+                                "resource": [
+                                    f"arn:aws:s3:::{bucket_name}",
+                                    f"arn:aws:s3:::{bucket_name}/*",
+                                ],
+                            }
+                        ],
+                    }
+                    logger.info(f"No policy provided, creating default policy for bucket {bucket_name}")
+                
+                logger.info(f"Creating user {user_name} with policy: {policy}")
                 user_response = provider_client.create_user(user_name, policy)
                 user_id = user_response.get("User", {}).get("UserId")
                 

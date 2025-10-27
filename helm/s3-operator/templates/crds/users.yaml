@@ -32,6 +32,14 @@ spec:
                 policy:
                   type: object
                   description: Inline IAM policy for the user
+                  properties:
+                    version:
+                      type: string
+                    statement:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                 tags:
                   type: object
                   additionalProperties:

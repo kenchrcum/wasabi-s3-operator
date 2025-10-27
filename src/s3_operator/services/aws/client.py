@@ -225,22 +225,30 @@ class AWSProvider:
 
     def set_bucket_policy(self, name: str, policy: dict[str, Any]) -> None:
         """Set bucket policy."""
+        logger.info(f"Starting bucket policy creation for bucket {name}")
         try:
             import json
 
+            logger.info(f"Original policy for bucket {name}: {policy}")
             # Convert CRD policy format to AWS format
             aws_policy = self._convert_policy_to_aws_format(policy)
-            
+            logger.info(f"Converted policy for bucket {name}: {aws_policy}")
+
             policy_json = json.dumps(aws_policy)
-            logger.debug(f"Setting bucket policy for {name}: {policy_json}")
-            
-            self.client.put_bucket_policy(
+            logger.info(f"Policy JSON for bucket {name}: {policy_json}")
+
+            logger.info(f"Calling put_bucket_policy for bucket {name}")
+            response = self.client.put_bucket_policy(
                 Bucket=name,
                 Policy=policy_json,
             )
+            logger.info(f"put_bucket_policy response: {response}")
+            logger.info(f"Successfully set bucket policy for {name}")
+
         except ClientError as e:
             logger.error(f"Failed to set policy for bucket {name}: {e}")
             logger.error(f"Policy that failed: {json.dumps(aws_policy) if 'aws_policy' in locals() else 'N/A'}")
+            logger.error(f"Bucket policy error details: {e.response}")
             raise
     
     def _convert_policy_to_aws_format(self, policy: dict[str, Any]) -> dict[str, Any]:
@@ -332,33 +340,65 @@ class AWSProvider:
     
     def create_user(self, name: str, policy: dict[str, Any] | None = None) -> dict[str, Any]:
         """Create an IAM user.
-        
+
         Args:
             name: User name
             policy: Optional inline policy document
-            
+
         Returns:
             User creation response
         """
+        logger.info(f"Starting user creation for {name}")
         if not self.iam_client:
+            logger.error("IAM client not initialized - IAM endpoint not configured")
             raise ValueError("IAM endpoint not configured")
-        
+
         try:
+            logger.info(f"Calling IAM create_user for {name}")
             response = self.iam_client.create_user(UserName=name)
-            
+            logger.info(f"Successfully created IAM user {name}: {response}")
+
             if policy:
                 import json
+                logger.info(f"Policy provided for user {name}: {policy}")
                 # Convert CRD policy format to AWS format
                 aws_policy = self._convert_policy_to_aws_format(policy)
-                self.iam_client.put_user_policy(
-                    UserName=name,
-                    PolicyName=f"{name}-policy",
-                    PolicyDocument=json.dumps(aws_policy),
-                )
-            
+                logger.info(f"Converted policy for user {name}: {aws_policy}")
+                policy_json = json.dumps(aws_policy)
+                logger.info(f"Policy JSON for user {name}: {policy_json}")
+
+                logger.info(f"Calling put_user_policy for user {name}")
+                try:
+                    put_response = self.iam_client.put_user_policy(
+                        UserName=name,
+                        PolicyName=f"{name}-policy",
+                        PolicyDocument=policy_json,
+                    )
+                    logger.info(f"put_user_policy response: {put_response}")
+                    logger.info(f"Successfully attached policy to user {name}")
+
+                    # Verify policy was attached
+                    logger.info(f"Verifying policy attachment for user {name}")
+                    try:
+                        verify_response = self.iam_client.get_user_policy(
+                            UserName=name,
+                            PolicyName=f"{name}-policy",
+                        )
+                        logger.info(f"Policy verification successful: {verify_response}")
+                    except ClientError as verify_error:
+                        logger.warning(f"Could not verify policy attachment: {verify_error}")
+                        logger.warning(f"Verify error details: {verify_error.response}")
+                except ClientError as e:
+                    logger.error(f"Failed to attach policy to user {name}: {e}")
+                    logger.error(f"Policy attachment error details: {e.response}")
+                    raise
+            else:
+                logger.info(f"No policy provided for user {name}")
+
             return response
         except ClientError as e:
             logger.error(f"Failed to create user {name}: {e}")
+            logger.error(f"User creation error details: {e.response}")
             raise
     
     def delete_user(self, name: str) -> None:

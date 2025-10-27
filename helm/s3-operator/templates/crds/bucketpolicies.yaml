@@ -45,7 +45,7 @@ spec:
                             type: string
                             enum: [Allow, Deny]
                           principal:
-                            type: string
+                            x-kubernetes-preserve-unknown-fields: true
                           action:
                             type: array
                             items:
