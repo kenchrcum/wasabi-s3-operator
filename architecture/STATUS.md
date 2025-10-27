@@ -160,7 +160,7 @@ helm install wasabi-s3-operator ./helm/wasabi-s3-operator \
 
 ```
 wasabi-s3-operator/
-├── src/wasabi_s3_provider/          # Operator code (18 Python files)
+├── src/wasabi_s3_operator/          # Operator code (18 Python files)
 │   ├── main.py               # All CRD handlers
 │   ├── builders/             # Resource builders
 │   ├── services/             # S3 provider implementations

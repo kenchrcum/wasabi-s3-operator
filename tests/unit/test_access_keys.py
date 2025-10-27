@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from wasabi_s3_provider.utils.access_keys import (
+from wasabi_s3_operator.utils.access_keys import (
     generate_access_key_id,
     generate_secret_access_key,
 )

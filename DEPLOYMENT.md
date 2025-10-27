@@ -254,7 +254,7 @@ For local development with kubectl proxy:
 ```bash
 # Run operator locally
 source .venv/bin/activate
-python -m wasabi_s3_provider.main
+python -m wasabi_s3_operator.main
 
 # In another terminal, proxy to cluster
 kubectl proxy

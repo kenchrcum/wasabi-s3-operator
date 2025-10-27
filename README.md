@@ -218,10 +218,10 @@ Configure via Helm values:
 
 The operator exposes Prometheus metrics on port `8080`:
 
-- `wasabi_s3_provider_reconcile_total{kind,result}` — Reconciliation counts
-- `wasabi_s3_provider_reconcile_duration_seconds{kind}` — Reconciliation latency histogram
-- `wasabi_s3_provider_bucket_operations_total{operation,result}` — S3 operation counts
-- `wasabi_s3_provider_provider_connectivity{provider}` — Provider connectivity status
+- `wasabi_s3_operator_reconcile_total{kind,result}` — Reconciliation counts
+- `wasabi_s3_operator_reconcile_duration_seconds{kind}` — Reconciliation latency histogram
+- `wasabi_s3_operator_bucket_operations_total{operation,result}` — S3 operation counts
+- `wasabi_s3_operator_provider_connectivity{provider}` — Provider connectivity status
 
 ### Events
 
@@ -268,7 +268,7 @@ pytest tests/
 ```
 .
 ├── src/
-│   └── wasabi_s3_provider/
+│   └── wasabi_s3_operator/
 │       ├── main.py              # Kopf handlers and reconciliation logic
 │       ├── metrics.py           # Prometheus metrics definitions
 │       ├── constants.py         # API group and label constants
@@ -300,7 +300,7 @@ pytest tests/unit/
 pytest tests/integration/
 
 # Run with coverage
-pytest --cov=wasabi_s3_provider tests/
+pytest --cov=wasabi_s3_operator tests/
 ```
 
 ### Code Quality

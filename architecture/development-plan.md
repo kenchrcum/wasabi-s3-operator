@@ -280,10 +280,10 @@ Operations:
 
 #### 6.3 Metrics
 Prometheus metrics:
-- `wasabi_s3_provider_reconcile_total{kind,result}`
-- `wasabi_s3_provider_reconcile_duration_seconds{kind}`
-- `wasabi_s3_provider_bucket_operations_total{operation,result}`
-- `wasabi_s3_provider_provider_connectivity{provider}`
+- `wasabi_s3_operator_reconcile_total{kind,result}`
+- `wasabi_s3_operator_reconcile_duration_seconds{kind}`
+- `wasabi_s3_operator_bucket_operations_total{operation,result}`
+- `wasabi_s3_operator_provider_connectivity{provider}`
 
 #### 6.4 Status Conditions
 Conditions for all CRDs:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from wasabi_s3_provider.utils.conditions import (
+from wasabi_s3_operator.utils.conditions import (
     set_auth_valid_condition,
     set_endpoint_reachable_condition,
     set_ready_condition,

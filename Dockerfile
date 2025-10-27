@@ -39,4 +39,4 @@ ENV USER=app
 COPY --from=base /usr/local /usr/local
 
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["exec kopf run --standalone -m wasabi_s3_provider.main"]
+CMD ["exec kopf run --standalone -m wasabi_s3_operator.main"]
