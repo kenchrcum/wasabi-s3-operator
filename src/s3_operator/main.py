@@ -7,9 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import kopf
-from prometheus_client import start_http_server, generate_latest
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
+from prometheus_client import start_http_server
 
 from . import logging as structured_logging
 from . import metrics
@@ -65,36 +63,9 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     settings.networking.request_timeout = 30.0
     settings.execution.max_workers = 4
 
-    # Start metrics HTTP server
+    # Start metrics HTTP server on port 8080
     metrics_port = int(os.getenv("METRICS_PORT", "8080"))
     start_http_server(metrics_port)
-    
-    # Start health check server
-    def health_handler():
-        class HealthHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/healthz":
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.end_headers()
-                    self.wfile.write(b"OK")
-                elif self.path == "/metrics":
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/plain")
-                    self.end_headers()
-                    self.wfile.write(generate_latest())
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-            
-            def log_message(self, format, *args):
-                pass  # Suppress HTTP server logs
-        
-        server = HTTPServer(("0.0.0.0", metrics_port), HealthHandler)
-        server.serve_forever()
-    
-    # Run health check server in background thread
-    threading.Thread(target=health_handler, daemon=True).start()
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_PROVIDER)

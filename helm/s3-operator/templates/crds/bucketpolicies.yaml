@@ -45,23 +45,18 @@ spec:
                             type: string
                             enum: [Allow, Deny]
                           principal:
-                            oneOf:
-                              - type: string
-                              - type: object
+                            type: string
                           action:
-                            oneOf:
-                              - type: string
-                              - type: array
-                                items:
-                                  type: string
+                            type: array
+                            items:
+                              type: string
                           resource:
-                            oneOf:
-                              - type: string
-                              - type: array
-                                items:
-                                  type: string
+                            type: array
+                            items:
+                              type: string
                           condition:
                             type: object
+                            x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

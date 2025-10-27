@@ -6,7 +6,17 @@ metadata:
   labels:
     {{- include "s3-operator.labels" . | nindent 4 }}
 rules:
-  # CRDs
+  # CRDs - allow listing to discover them
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+  
+  # Custom Resources
   - apiGroups:
       - s3.cloud37.dev
     resources:
