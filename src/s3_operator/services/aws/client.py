@@ -226,12 +226,16 @@ class AWSProvider:
             # Convert CRD policy format to AWS format
             aws_policy = self._convert_policy_to_aws_format(policy)
             
+            policy_json = json.dumps(aws_policy)
+            logger.debug(f"Setting bucket policy for {name}: {policy_json}")
+            
             self.client.put_bucket_policy(
                 Bucket=name,
-                Policy=json.dumps(aws_policy),
+                Policy=policy_json,
             )
         except ClientError as e:
             logger.error(f"Failed to set policy for bucket {name}: {e}")
+            logger.error(f"Policy that failed: {json.dumps(aws_policy) if 'aws_policy' in locals() else 'N/A'}")
             raise
     
     def _convert_policy_to_aws_format(self, policy: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +276,7 @@ class AWSProvider:
             
             aws_policy["Statement"] = aws_statements
         
+        logger.debug(f"Converted policy from CRD format to AWS format: {aws_policy}")
         return aws_policy
 
     def get_bucket_policy(self, name: str) -> dict[str, Any]:

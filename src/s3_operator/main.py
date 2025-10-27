@@ -32,6 +32,7 @@ from .utils.conditions import (
     set_endpoint_reachable_condition,
     set_ready_condition,
 )
+from .utils.access_keys import create_access_key_secret
 from .utils.events import (
     emit_access_key_created,
     emit_access_key_rotated,
@@ -955,8 +956,6 @@ def handle_access_key(
         if not existing_key_id:
             # Create access key for the user via IAM
             try:
-                from ..utils.access_keys import create_access_key_secret
-
                 key_response = provider_client.create_access_key(user_name)
                 access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
                 secret_access_key = key_response.get("AccessKey", {}).get("SecretAccessKey")
