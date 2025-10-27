@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from kubernetes import client
@@ -31,7 +32,19 @@ def get_secret_value(
         secret = api.read_namespaced_secret(name=secret_name, namespace=namespace)
         if key not in secret.data:
             raise ValueError(f"Key '{key}' not found in secret '{secret_name}'")
-        return secret.data[key].decode("utf-8")
+        
+        value = secret.data[key]
+        # Handle both string and bytes (different versions of kubernetes client)
+        if isinstance(value, str):
+            # Try to base64 decode first (normal case)
+            try:
+                return base64.b64decode(value).decode("utf-8")
+            except Exception:
+                # If base64 decode fails, assume it's already decoded
+                return value
+        else:
+            # Value is already bytes, decode it
+            return value.decode("utf-8")
     except client.exceptions.ApiException as e:
         if e.status == 404:
             raise ValueError(f"Secret '{secret_name}' not found in namespace '{namespace}'") from e
@@ -63,7 +76,7 @@ def create_secret(
             owner_references=owner_references or [],
         ),
         type="Opaque",
-        data={k: v.encode("utf-8") for k, v in data.items()},
+        data={k: base64.b64encode(v.encode("utf-8")).decode("utf-8") for k, v in data.items()},
     )
 
     api.create_namespaced_secret(
@@ -92,7 +105,7 @@ def update_secret(
     secret = client.V1Secret(
         metadata=client.V1ObjectMeta(name=secret_name, namespace=namespace),
         type="Opaque",
-        data={k: v.encode("utf-8") for k, v in data.items()},
+        data={k: base64.b64encode(v.encode("utf-8")).decode("utf-8") for k, v in data.items()},
     )
 
     api.patch_namespaced_secret(

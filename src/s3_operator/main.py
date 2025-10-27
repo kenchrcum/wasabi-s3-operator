@@ -310,172 +310,171 @@ def handle_bucket(
                 
                 # Step 1: Create User
                 user_crd_name = f"{name}-user"
+                # Check if user already exists
                 try:
-                    # Check if user already exists
-                    try:
-                        existing_user = api.get_namespaced_custom_object(
+                    existing_user = api.get_namespaced_custom_object(
+                        group="s3.cloud37.dev",
+                        version="v1alpha1",
+                        namespace=namespace,
+                        plural="users",
+                        name=user_crd_name,
+                    )
+                    logger.info(f"User {user_crd_name} already exists")
+                except client.exceptions.ApiException as e:
+                    if e.status == 404:
+                        # Create user
+                        import json
+                        user_body = {
+                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                            "kind": "User",
+                            "metadata": {
+                                "name": user_crd_name,
+                                "namespace": namespace,
+                                "ownerReferences": [
+                                    {
+                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                        "kind": "Bucket",
+                                        "name": name,
+                                        "uid": meta.get("uid"),
+                                        "controller": True,
+                                    }
+                                ],
+                            },
+                            "spec": {
+                                "providerRef": {"name": provider_name},
+                                "name": user_name,
+                                "tags": {"ManagedBy": "s3-operator", "Bucket": bucket_name},
+                            },
+                        }
+                        api.create_namespaced_custom_object(
                             group="s3.cloud37.dev",
                             version="v1alpha1",
                             namespace=namespace,
                             plural="users",
-                            name=user_crd_name,
+                            body=user_body,
                         )
-                        logger.info(f"User {user_crd_name} already exists")
-                    except client.exceptions.ApiException as e:
-                        if e.status == 404:
-                            # Create user
-                            import json
-                            user_body = {
-                                "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                "kind": "User",
-                                "metadata": {
-                                    "name": user_crd_name,
-                                    "namespace": namespace,
-                                    "ownerReferences": [
+                        logger.info(f"Created user {user_crd_name}")
+                    else:
+                        raise
+                
+                # Step 2: Create BucketPolicy
+                policy_crd_name = f"{name}-policy"
+                try:
+                    existing_policy = api.get_namespaced_custom_object(
+                        group="s3.cloud37.dev",
+                        version="v1alpha1",
+                        namespace=namespace,
+                        plural="bucketpolicies",
+                        name=policy_crd_name,
+                    )
+                    logger.info(f"BucketPolicy {policy_crd_name} already exists")
+                except client.exceptions.ApiException as e:
+                    if e.status == 404:
+                        # Determine actions based on access level
+                        actions = []
+                        if access_level == "readonly":
+                            actions = ["s3:GetObject", "s3:ListBucket"]
+                        elif access_level == "readwrite":
+                            actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+                        else:  # full
+                            actions = ["s3:*"]
+                        
+                        policy_body = {
+                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                            "kind": "BucketPolicy",
+                            "metadata": {
+                                "name": policy_crd_name,
+                                "namespace": namespace,
+                                "ownerReferences": [
+                                    {
+                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                        "kind": "Bucket",
+                                        "name": name,
+                                        "uid": meta.get("uid"),
+                                        "controller": True,
+                                    }
+                                ],
+                            },
+                            "spec": {
+                                "bucketRef": {"name": name},
+                                "policy": {
+                                    "version": "2012-10-17",
+                                    "statement": [
                                         {
-                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                            "kind": "Bucket",
-                                            "name": name,
-                                            "uid": meta.get("uid"),
-                                            "controller": True,
+                                            "effect": "Allow",
+                                            "principal": f"arn:aws:iam::wasabi:user/{user_name}",
+                                            "action": actions,
+                                            "resource": [
+                                                f"arn:aws:s3:::{bucket_name}",
+                                                f"arn:aws:s3:::{bucket_name}/*",
+                                            ],
                                         }
                                     ],
                                 },
-                                "spec": {
-                                    "providerRef": {"name": provider_name},
-                                    "name": user_name,
-                                    "tags": {"ManagedBy": "s3-operator", "Bucket": bucket_name},
-                                },
-                            }
-                            api.create_namespaced_custom_object(
-                                group="s3.cloud37.dev",
-                                version="v1alpha1",
-                                namespace=namespace,
-                                plural="users",
-                                body=user_body,
-                            )
-                            logger.info(f"Created user {user_crd_name}")
-                        else:
-                            raise
-                
-                    # Step 2: Create BucketPolicy
-                    policy_crd_name = f"{name}-policy"
-                    try:
-                        existing_policy = api.get_namespaced_custom_object(
+                            },
+                        }
+                        api.create_namespaced_custom_object(
                             group="s3.cloud37.dev",
                             version="v1alpha1",
                             namespace=namespace,
                             plural="bucketpolicies",
-                            name=policy_crd_name,
+                            body=policy_body,
                         )
-                        logger.info(f"BucketPolicy {policy_crd_name} already exists")
-                    except client.exceptions.ApiException as e:
-                        if e.status == 404:
-                            # Determine actions based on access level
-                            actions = []
-                            if access_level == "readonly":
-                                actions = ["s3:GetObject", "s3:ListBucket"]
-                            elif access_level == "readwrite":
-                                actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
-                            else:  # full
-                                actions = ["s3:*"]
-                            
-                            policy_body = {
-                                "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                "kind": "BucketPolicy",
-                                "metadata": {
-                                    "name": policy_crd_name,
-                                    "namespace": namespace,
-                                    "ownerReferences": [
-                                        {
-                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                            "kind": "Bucket",
-                                            "name": name,
-                                            "uid": meta.get("uid"),
-                                            "controller": True,
-                                        }
-                                    ],
-                                },
-                                "spec": {
-                                    "bucketRef": {"name": name},
-                                    "policy": {
-                                        "version": "2012-10-17",
-                                        "statement": [
-                                            {
-                                                "effect": "Allow",
-                                                "principal": f"arn:aws:iam::wasabi:user/{user_name}",
-                                                "action": actions,
-                                                "resource": [
-                                                    f"arn:aws:s3:::{bucket_name}",
-                                                    f"arn:aws:s3:::{bucket_name}/*",
-                                                ],
-                                            }
-                                        ],
-                                    },
-                                },
-                            }
-                            api.create_namespaced_custom_object(
-                                group="s3.cloud37.dev",
-                                version="v1alpha1",
-                                namespace=namespace,
-                                plural="bucketpolicies",
-                                body=policy_body,
-                            )
-                            logger.info(f"Created bucket policy {policy_crd_name}")
-                        else:
-                            raise
-                    
-                    # Step 3: Create AccessKey
-                    accesskey_crd_name = f"{name}-accesskey"
-                    try:
-                        existing_key = api.get_namespaced_custom_object(
+                        logger.info(f"Created bucket policy {policy_crd_name}")
+                    else:
+                        raise
+                
+                # Step 3: Create AccessKey
+                accesskey_crd_name = f"{name}-accesskey"
+                try:
+                    existing_key = api.get_namespaced_custom_object(
+                        group="s3.cloud37.dev",
+                        version="v1alpha1",
+                        namespace=namespace,
+                        plural="accesskeys",
+                        name=accesskey_crd_name,
+                    )
+                    logger.info(f"AccessKey {accesskey_crd_name} already exists")
+                except client.exceptions.ApiException as e:
+                    if e.status == 404:
+                        rotation_config = auto_manage.get("rotation", {})
+                        accesskey_body = {
+                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                            "kind": "AccessKey",
+                            "metadata": {
+                                "name": accesskey_crd_name,
+                                "namespace": namespace,
+                                "ownerReferences": [
+                                    {
+                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                        "kind": "Bucket",
+                                        "name": name,
+                                        "uid": meta.get("uid"),
+                                        "controller": True,
+                                    }
+                                ],
+                            },
+                            "spec": {
+                                "providerRef": {"name": provider_name},
+                                "userRef": {"name": user_crd_name},
+                                "displayName": f"Access key for bucket {bucket_name}",
+                                "rotate": rotation_config,
+                            },
+                        }
+                        api.create_namespaced_custom_object(
                             group="s3.cloud37.dev",
                             version="v1alpha1",
                             namespace=namespace,
                             plural="accesskeys",
-                            name=accesskey_crd_name,
+                            body=accesskey_body,
                         )
-                        logger.info(f"AccessKey {accesskey_crd_name} already exists")
-                    except client.exceptions.ApiException as e:
-                        if e.status == 404:
-                            rotation_config = auto_manage.get("rotation", {})
-                            accesskey_body = {
-                                "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                "kind": "AccessKey",
-                                "metadata": {
-                                    "name": accesskey_crd_name,
-                                    "namespace": namespace,
-                                    "ownerReferences": [
-                                        {
-                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                            "kind": "Bucket",
-                                            "name": name,
-                                            "uid": meta.get("uid"),
-                                            "controller": True,
-                                        }
-                                    ],
-                                },
-                                "spec": {
-                                    "providerRef": {"name": provider_name},
-                                    "userRef": {"name": user_crd_name},
-                                    "displayName": f"Access key for bucket {bucket_name}",
-                                    "rotate": rotation_config,
-                                },
-                            }
-                            api.create_namespaced_custom_object(
-                                group="s3.cloud37.dev",
-                                version="v1alpha1",
-                                namespace=namespace,
-                                plural="accesskeys",
-                                body=accesskey_body,
-                            )
-                            logger.info(f"Created access key {accesskey_crd_name}")
-                        else:
-                            raise
-                
-                except Exception as e:
-                    logger.error(f"Failed to auto-manage resources for bucket {bucket_name}: {e}")
-                    # Don't fail bucket creation if auto-management fails
+                        logger.info(f"Created access key {accesskey_crd_name}")
+                    else:
+                        raise
+            
+            except Exception as e:
+                logger.error(f"Failed to auto-manage resources for bucket {bucket_name}: {e}")
+                # Don't fail bucket creation if auto-management fails
 
         # Set ready condition
         conditions = set_ready_condition(conditions, True, f"Bucket {bucket_name} is ready")
