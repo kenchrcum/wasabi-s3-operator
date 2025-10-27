@@ -191,6 +191,21 @@ spec:
                   type: array
                   items:
                     type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
                 credentialsSecret:
                   type: string
                   description: Name of the secret containing bucket access credentials

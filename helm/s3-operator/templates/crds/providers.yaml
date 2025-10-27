@@ -90,6 +90,9 @@ spec:
                   type: string
                   format: uri
                   description: IAM endpoint URL (required for user management, e.g., https://iam.wasabisys.com)
+                iamRegion:
+                  type: string
+                  description: IAM region for IAM operations (optional, defaults to us-east-1)
                 retry:
                   type: object
                   properties:
@@ -121,7 +124,7 @@ spec:
                         type: string
                       status:
                         type: string
-                        enum: [True, False, Unknown]
+                        enum: ["True", "False", "Unknown"]
                       reason:
                         type: string
                       message:
