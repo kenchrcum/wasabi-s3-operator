@@ -17,11 +17,10 @@ RUN apk add --no-cache gcc musl-dev
 WORKDIR /app
 COPY pyproject.toml /app/
 COPY requirements.txt /app/
-COPY src /app/src
-
 RUN python -m pip install --upgrade pip && \
-    python -m pip install -r requirements.txt && \
-    python -m pip install .
+    python -m pip install -r requirements.txt
+COPY src /app/src
+RUN python -m pip install .
 
 # Final image
 FROM python:3.14-alpine${BASE_DIGEST:+@${BASE_DIGEST}}
