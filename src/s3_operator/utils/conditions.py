@@ -31,7 +31,7 @@ def update_condition(
     Args:
         conditions: List of existing conditions
         condition_type: Type of condition
-        status: Status of condition (True, False, Unknown)
+        status: Status of condition ("True", "False", "Unknown")
         reason: Reason for the condition
         message: Human-readable message
         observed_generation: Generation when condition was observed

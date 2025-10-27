@@ -54,11 +54,9 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     structured_logging.setup_structured_logging()
 
     # Configure persistence
-    try:
-        settings.persistence.progress_storage = kopf.StatusProgressStorage()
-        settings.persistence.diffbase_storage = kopf.AnnotationDiffBaseStorage()
-    except Exception:
-        settings.persistence.progress_storage = kopf.SmartProgressStorage()
+    # Use AnnotationsProgressStorage to avoid conflicts with status updates
+    settings.persistence.progress_storage = kopf.AnnotationsProgressStorage()
+    settings.persistence.diffbase_storage = kopf.AnnotationsDiffBaseStorage()
 
     settings.posting.level = 0
     settings.networking.request_timeout = 30.0
@@ -76,8 +74,9 @@ def handle_provider(
     spec: dict[str, Any],
     meta: dict[str, Any],
     status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> None:
     """Handle Provider resource reconciliation."""
     import logging
 
@@ -149,7 +148,8 @@ def handle_provider(
         else:
             metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="failed").inc()
 
-        return status_update
+        # Update status directly via patch to avoid conflicts
+        patch.status.update(status_update)
 
     except Exception as e:
         logger.error(f"Provider reconciliation failed for {name}: {e}")
@@ -181,8 +181,9 @@ def handle_bucket(
     spec: dict[str, Any],
     meta: dict[str, Any],
     status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> None:
     """Handle Bucket resource reconciliation."""
     import logging
 
@@ -240,17 +241,17 @@ def handle_bucket(
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
             raise
 
         # Check if provider is ready
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -260,10 +261,10 @@ def handle_bucket(
             conditions = set_provider_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -289,11 +290,11 @@ def handle_bucket(
                 conditions = set_creation_failed_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                return {
+                patch.status.update({
                     "exists": False,
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
         else:
             emit_bucket_updated(meta, bucket_name)
             logger.info(f"Bucket {bucket_name} already exists")
@@ -494,7 +495,7 @@ def handle_bucket(
             status_update["credentialsSecret"] = f"{accesskey_crd_name}-credentials"
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET, result="success").inc()
-        return status_update
+        patch.status.update(status_update)
 
     except Exception as e:
         logger.error(f"Bucket reconciliation failed for {name}: {e}")
@@ -564,8 +565,9 @@ def handle_bucket_policy(
     spec: dict[str, Any],
     meta: dict[str, Any],
     status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> None:
     """Handle BucketPolicy resource reconciliation."""
     import logging
 
@@ -630,17 +632,17 @@ def handle_bucket_policy(
                 conditions = set_bucket_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
             raise
 
         # Check if bucket is ready
         bucket_status = bucket_obj.get("status", {})
         bucket_conditions = bucket_status.get("conditions", [])
         bucket_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in bucket_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in bucket_conditions
         )
 
         if not bucket_ready:
@@ -650,10 +652,10 @@ def handle_bucket_policy(
             conditions = set_bucket_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Get bucket spec to find provider
         bucket_spec = bucket_obj.get("spec", {})
@@ -667,10 +669,10 @@ def handle_bucket_policy(
             conditions = set_bucket_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Get provider
         provider_ns = provider_ref.get("namespace", bucket_ns)
@@ -697,10 +699,10 @@ def handle_bucket_policy(
                 conditions = set_bucket_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
 
             # Apply policy
             provider_client.set_bucket_policy(bucket_name, policy)
@@ -716,11 +718,11 @@ def handle_bucket_policy(
             conditions = set_apply_failed_condition(conditions, error_msg)
             emit_policy_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-            return {
+            patch.status.update({
                 "applied": False,
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Update status
         status_update = {
@@ -731,7 +733,7 @@ def handle_bucket_policy(
         }
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="success").inc()
-        return status_update
+        patch.status.update(status_update)
 
     except Exception as e:
         logger.error(f"BucketPolicy reconciliation failed for {name}: {e}")
@@ -811,8 +813,9 @@ def handle_access_key(
     spec: dict[str, Any],
     meta: dict[str, Any],
     status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> None:
     """Handle AccessKey resource reconciliation."""
     import logging
 
@@ -863,17 +866,17 @@ def handle_access_key(
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
             raise
 
         # Check if provider is ready
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -883,10 +886,10 @@ def handle_access_key(
             conditions = set_provider_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -920,17 +923,17 @@ def handle_access_key(
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
             raise
 
         # Check if user is ready
         user_status = user_obj.get("status", {})
         user_conditions = user_status.get("conditions", [])
         user_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in user_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in user_conditions
         )
 
         if not user_ready:
@@ -940,10 +943,10 @@ def handle_access_key(
             conditions = set_provider_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Check if access key already exists
         existing_key_id = status.get("accessKeyId")
@@ -999,17 +1002,17 @@ def handle_access_key(
                 }
 
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
-                return status_update
+                patch.status.update(status_update)
             except Exception as e:
                 error_msg = f"Failed to create access key: {str(e)}"
                 logger.error(error_msg)
                 conditions = set_creation_failed_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
         else:
             # Access key already exists
             logger.info(f"Access key {existing_key_id} already exists")
@@ -1023,7 +1026,7 @@ def handle_access_key(
             }
 
             metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
-            return status_update
+            patch.status.update(status_update)
 
     except Exception as e:
         logger.error(f"AccessKey reconciliation failed for {name}: {e}")
@@ -1057,8 +1060,9 @@ def handle_user(
     spec: dict[str, Any],
     meta: dict[str, Any],
     status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> None:
     """Handle User resource reconciliation."""
     import logging
 
@@ -1116,17 +1120,17 @@ def handle_user(
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
+                })
             raise
 
         # Check if provider is ready
         provider_status = provider_obj.get("status", {})
         provider_conditions = provider_status.get("conditions", [])
         provider_ready = any(
-            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
+            cond.get("type") == "Ready" and cond.get("status") == "true" for cond in provider_conditions
         )
 
         if not provider_ready:
@@ -1136,10 +1140,10 @@ def handle_user(
             conditions = set_provider_not_ready_condition(conditions, error_msg)
             emit_reconcile_failed(meta, error_msg)
             metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-            return {
+            patch.status.update({
                 "conditions": conditions,
                 "observedGeneration": meta.get("generation", 0),
-            }
+            })
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -1158,28 +1162,28 @@ def handle_user(
                 
                 conditions = set_ready_condition(conditions, True, f"User {user_name} created")
                 logger.info(f"Created user {user_name} with ID {user_id}")
+                
+                # Update status on success
+                status_update = {
+                    "observedGeneration": meta.get("generation", 0),
+                    "userId": user_id,
+                    "created": True,
+                    "lastSyncTime": datetime.now(timezone.utc).isoformat(),
+                    "conditions": conditions,
+                }
+
+                metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
+                patch.status.update(status_update)
             except Exception as e:
                 error_msg = f"Failed to create user: {str(e)}"
                 logger.error(error_msg)
                 conditions = set_creation_failed_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                return {
+                patch.status.update({
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
-                }
-
-            # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
-                "userId": user_id,
-                "created": True,
-                "lastSyncTime": datetime.now(timezone.utc).isoformat(),
-                "conditions": conditions,
-            }
-
-            metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
-            return status_update
+                })
         else:
             # User already exists
             logger.info(f"User {user_name} already exists")
@@ -1193,7 +1197,7 @@ def handle_user(
             }
 
             metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
-            return status_update
+            patch.status.update(status_update)
 
     except Exception as e:
         logger.error(f"User reconciliation failed for {name}: {e}")

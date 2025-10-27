@@ -27,6 +27,7 @@ class AWSProvider:
         path_style: bool = True,
         insecure_skip_verify: bool = False,
         iam_endpoint: str | None = None,
+        iam_region: str | None = None,
     ) -> None:
         """Initialize AWS S3 provider.
 
@@ -39,11 +40,13 @@ class AWSProvider:
             path_style: Use path-style addressing
             insecure_skip_verify: Skip TLS verification
             iam_endpoint: Optional IAM endpoint URL for user management
+            iam_region: Optional IAM region (defaults to us-east-1)
         """
         self.endpoint = endpoint
         self.region = region
         self.path_style = path_style
         self.iam_endpoint = iam_endpoint
+        self.iam_region = iam_region or "us-east-1"
 
         # Configure boto3 client
         config = boto3.session.Config(
@@ -76,7 +79,7 @@ class AWSProvider:
             self.iam_client = boto3.client(
                 "iam",
                 endpoint_url=iam_endpoint,
-                region_name=region,
+                region_name=self.iam_region,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
                 aws_session_token=session_token,
@@ -220,13 +223,56 @@ class AWSProvider:
         try:
             import json
 
+            # Convert CRD policy format to AWS format
+            aws_policy = self._convert_policy_to_aws_format(policy)
+            
             self.client.put_bucket_policy(
                 Bucket=name,
-                Policy=json.dumps(policy),
+                Policy=json.dumps(aws_policy),
             )
         except ClientError as e:
             logger.error(f"Failed to set policy for bucket {name}: {e}")
             raise
+    
+    def _convert_policy_to_aws_format(self, policy: dict[str, Any]) -> dict[str, Any]:
+        """Convert CRD policy format to AWS IAM policy format.
+        
+        CRD uses lowercase keys (statement, effect, principal, action, resource)
+        AWS expects PascalCase keys (Statement, Effect, Principal, Action, Resource)
+        """
+        aws_policy = {}
+        
+        # Copy version
+        if "version" in policy:
+            aws_policy["Version"] = policy["version"]
+        
+        # Convert statements
+        if "statement" in policy:
+            aws_statements = []
+            for stmt in policy["statement"]:
+                aws_stmt = {}
+                
+                # Copy optional fields
+                if "sid" in stmt:
+                    aws_stmt["Sid"] = stmt["sid"]
+                
+                # Required fields with capitalization
+                if "effect" in stmt:
+                    aws_stmt["Effect"] = stmt["effect"]
+                if "principal" in stmt:
+                    aws_stmt["Principal"] = stmt["principal"]
+                if "action" in stmt:
+                    aws_stmt["Action"] = stmt["action"]
+                if "resource" in stmt:
+                    aws_stmt["Resource"] = stmt["resource"]
+                if "condition" in stmt:
+                    aws_stmt["Condition"] = stmt["condition"]
+                
+                aws_statements.append(aws_stmt)
+            
+            aws_policy["Statement"] = aws_statements
+        
+        return aws_policy
 
     def get_bucket_policy(self, name: str) -> dict[str, Any]:
         """Get bucket policy."""
