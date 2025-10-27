@@ -34,6 +34,7 @@ RUN apk update && apk upgrade --no-cache
 RUN addgroup -S app && adduser -S app -G app
 USER app
 WORKDIR /app
+ENV USER=app
 
 # Copy the installed site-packages from builder layer
 COPY --from=base /usr/local /usr/local
