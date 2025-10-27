@@ -11,6 +11,8 @@ spec:
       - sid: PublicReadGetObject
         effect: Allow
         principal: "*"
-        action: s3:GetObject
-        resource: "arn:aws:s3:::my-bucket/*"
+        action:
+          - s3:GetObject
+        resource:
+          - "arn:aws:s3:::my-bucket/*"
 
