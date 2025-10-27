@@ -29,7 +29,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Upgrade system packages (alpine doesn't have apt-get)
 RUN apk update && apk upgrade --no-cache
 
-RUN addgroup --system app && adduser --system app --group
+RUN addgroup -S app && adduser -S app -G app
 USER app
 WORKDIR /app
 
