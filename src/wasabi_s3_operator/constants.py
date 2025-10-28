@@ -10,6 +10,7 @@ KIND_BUCKET = "Bucket"
 KIND_BUCKET_POLICY = "BucketPolicy"
 KIND_ACCESS_KEY = "AccessKey"
 KIND_USER = "User"
+KIND_IAM_POLICY = "IAMPolicy"
 
 # Labels
 LABEL_MANAGED_BY = f"{API_GROUP}/managed-by"
@@ -35,6 +36,7 @@ COND_CREATION_FAILED = "CreationFailed"
 COND_POLICY_INVALID = "PolicyInvalid"
 COND_APPLY_FAILED = "ApplyFailed"
 COND_ROTATION_FAILED = "RotationFailed"
+COND_ATTACH_FAILED = "AttachFailed"
 
 # Event Reasons
 EVENT_REASON_RECONCILE_STARTED = "ReconcileStarted"

@@ -1,0 +1,57 @@
+# Example workflow using IAMPolicy for reusable policy management
+---
+# Step 1: Create a reusable IAM Policy
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: IAMPolicy
+metadata:
+  name: production-bucket-access
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  policy:
+    version: "2012-10-17"
+    statement:
+      - effect: Allow
+        action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+          - s3:ListBucket
+        resource:
+          - "arn:aws:s3:::production-data"
+          - "arn:aws:s3:::production-data/*"
+  tags:
+    Environment: production
+    ManagedBy: wasabi-s3-operator
+---
+# Step 2: Create User referencing the IAM Policy
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: User
+metadata:
+  name: production-app-user
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: production-app-user
+  policyRef:
+    name: production-bucket-access
+  tags:
+    Environment: production
+    Application: production-app
+---
+# Step 3: Create Access Key for the User
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: AccessKey
+metadata:
+  name: production-app-user-accesskey
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  userRef:
+    name: production-app-user
+  displayName: Production App Access Key
+  rotate:
+    enabled: true
+    intervalDays: 90
+    previousKeysRetentionDays: 7
+

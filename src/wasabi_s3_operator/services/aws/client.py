@@ -533,4 +533,67 @@ class AWSProvider:
         except ClientError as e:
             logger.error(f"Failed to delete policy {policy_name} from user {user_name}: {e}")
             raise
+    
+    def attach_user_policy(self, user_name: str, policy_name: str) -> None:
+        """Attach a managed policy to a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name to attach
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            # Try to attach as a managed policy first
+            policy_arn = f"arn:aws:iam::*:policy/{policy_name}"
+            self.iam_client.attach_user_policy(UserName=user_name, PolicyArn=policy_arn)
+            logger.info(f"Attached managed policy {policy_name} to user {user_name}")
+        except ClientError as e:
+            # If managed policy doesn't exist, try to attach as inline policy
+            logger.warning(f"Failed to attach managed policy {policy_name}: {e}")
+            # For now, we'll use inline policies instead
+            raise
+    
+    def detach_user_policy(self, user_name: str, policy_name: str) -> None:
+        """Detach a managed policy from a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name to detach
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            policy_arn = f"arn:aws:iam::*:policy/{policy_name}"
+            self.iam_client.detach_user_policy(UserName=user_name, PolicyArn=policy_arn)
+            logger.info(f"Detached policy {policy_name} from user {user_name}")
+        except ClientError as e:
+            logger.error(f"Failed to detach policy {policy_name} from user {user_name}: {e}")
+            raise
+    
+    def attach_user_policy_inline(self, user_name: str, policy_name: str, policy_document: dict[str, Any]) -> None:
+        """Attach an inline policy to a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name
+            policy_document: Policy document dictionary
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            import json
+            policy_json = json.dumps(policy_document)
+            self.iam_client.put_user_policy(
+                UserName=user_name,
+                PolicyName=policy_name,
+                PolicyDocument=policy_json,
+            )
+            logger.info(f"Attached inline policy {policy_name} to user {user_name}")
+        except ClientError as e:
+            logger.error(f"Failed to attach inline policy {policy_name} to user {user_name}: {e}")
+            raise
 

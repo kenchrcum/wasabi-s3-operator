@@ -7,6 +7,7 @@ from typing import Any
 
 from ..constants import (
     COND_APPLY_FAILED,
+    COND_ATTACH_FAILED,
     COND_AUTH_VALID,
     COND_BUCKET_NOT_READY,
     COND_CREATION_FAILED,
@@ -213,6 +214,22 @@ def set_bucket_not_ready_condition(
         COND_BUCKET_NOT_READY,
         "True",
         "BucketNotReady",
+        message,
+        observed_generation,
+    )
+
+
+def set_attach_failed_condition(
+    conditions: list[dict[str, Any]],
+    message: str,
+    observed_generation: int | None = None,
+) -> list[dict[str, Any]]:
+    """Set the AttachFailed condition."""
+    return update_condition(
+        conditions,
+        COND_ATTACH_FAILED,
+        "True",
+        "AttachFailed",
         message,
         observed_generation,
     )

@@ -19,11 +19,13 @@ from .constants import (
     KIND_ACCESS_KEY,
     KIND_BUCKET,
     KIND_BUCKET_POLICY,
+    KIND_IAM_POLICY,
     KIND_PROVIDER,
     KIND_USER,
 )
 from .utils.conditions import (
     set_apply_failed_condition,
+    set_attach_failed_condition,
     set_bucket_not_ready_condition,
     set_creation_failed_condition,
     set_policy_invalid_condition,
@@ -1285,6 +1287,83 @@ def handle_user(
             # Create user in IAM
             try:
                 policy = spec.get("policy")
+                policy_ref = spec.get("policyRef")
+                
+                # Check for mutually exclusive policy options
+                if policy and policy_ref:
+                    error_msg = "Cannot specify both policy and policyRef"
+                    logger.error(error_msg)
+                    conditions = set_creation_failed_condition(conditions, error_msg)
+                    emit_reconcile_failed(meta, error_msg)
+                    metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                    patch.status.update({
+                        "conditions": conditions,
+                        "observedGeneration": meta.get("generation", 0),
+                    })
+                    return
+                
+                # If policyRef is provided, fetch the IAMPolicy
+                if policy_ref:
+                    policy_name = policy_ref.get("name")
+                    policy_ns = policy_ref.get("namespace", namespace)
+                    
+                    if not policy_name:
+                        error_msg = "policyRef.name is required"
+                        logger.error(error_msg)
+                        conditions = set_creation_failed_condition(conditions, error_msg)
+                        emit_reconcile_failed(meta, error_msg)
+                        metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                        patch.status.update({
+                            "conditions": conditions,
+                            "observedGeneration": meta.get("generation", 0),
+                        })
+                        return
+                    
+                    # Fetch the IAMPolicy
+                    try:
+                        policy_obj = api.get_namespaced_custom_object(
+                            group="s3.cloud37.dev",
+                            version="v1alpha1",
+                            namespace=policy_ns,
+                            plural="iampolicies",
+                            name=policy_name,
+                        )
+                        
+                        # Check if policy is ready
+                        policy_status = policy_obj.get("status", {})
+                        policy_conditions = policy_status.get("conditions", [])
+                        policy_ready = any(
+                            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in policy_conditions
+                        )
+                        
+                        if not policy_ready:
+                            error_msg = f"IAMPolicy {policy_name} is not ready"
+                            logger.warning(error_msg)
+                            conditions = set_creation_failed_condition(conditions, error_msg)
+                            emit_reconcile_failed(meta, error_msg)
+                            metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                            patch.status.update({
+                                "conditions": conditions,
+                                "observedGeneration": meta.get("generation", 0),
+                            })
+                            raise kopf.TemporaryError(error_msg)
+                        
+                        # Get the policy from the IAMPolicy spec
+                        policy = policy_obj.get("spec", {}).get("policy")
+                        logger.info(f"Using policy from IAMPolicy {policy_name}")
+                    except client.exceptions.ApiException as e:
+                        if e.status == 404:
+                            error_msg = f"IAMPolicy {policy_name} not found in namespace {policy_ns}"
+                            logger.error(error_msg)
+                            conditions = set_creation_failed_condition(conditions, error_msg)
+                            emit_reconcile_failed(meta, error_msg)
+                            metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
+                            patch.status.update({
+                                "conditions": conditions,
+                                "observedGeneration": meta.get("generation", 0),
+                            })
+                            return
+                        raise
                 
                 # If no policy provided, create a default policy allowing access to the bucket
                 if not policy:
@@ -1410,4 +1489,166 @@ def handle_user_delete(
         except Exception as e:
             logger.error(f"Failed to delete user {user_name}: {e}")
             # Don't fail deletion if cleanup fails
+
+
+@kopf.on.create(API_GROUP_VERSION, KIND_IAM_POLICY)
+@kopf.on.update(API_GROUP_VERSION, KIND_IAM_POLICY)
+@kopf.on.resume(API_GROUP_VERSION, KIND_IAM_POLICY)
+def handle_iampolicy(
+    spec: dict[str, Any],
+    meta: dict[str, Any],
+    status: dict[str, Any],
+    patch: kopf.Patch,
+    **kwargs: Any,
+) -> None:
+    """Handle IAMPolicy resource reconciliation."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    namespace = meta.get("namespace", "default")
+    name = meta.get("name", "unknown")
+
+    emit_reconcile_started(meta)
+    metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="started").inc()
+
+    # Track duration
+    start_time = time.time()
+    try:
+        # Validate spec
+        provider_ref = spec.get("providerRef", {})
+        provider_name = provider_ref.get("name")
+        policy = spec.get("policy", {})
+
+        if not provider_name:
+            error_msg = "providerRef.name is required"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+            raise ValueError(error_msg)
+
+        if not policy:
+            error_msg = "policy is required"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+            raise ValueError(error_msg)
+
+        # Validate policy document structure
+        if not isinstance(policy, dict) or "statement" not in policy:
+            error_msg = "policy must contain 'statement' field"
+            emit_validate_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+            raise ValueError(error_msg)
+
+        emit_validate_succeeded(meta)
+
+        # Get provider
+        from kubernetes import client, config
+
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+
+        api = client.CustomObjectsApi()
+        provider_ns = provider_ref.get("namespace", namespace)
+
+        try:
+            provider_obj = api.get_namespaced_custom_object(
+                group="s3.cloud37.dev",
+                version="v1alpha1",
+                namespace=provider_ns,
+                plural="providers",
+                name=provider_name,
+            )
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
+                logger.error(error_msg)
+                conditions = status.get("conditions", [])
+                conditions = set_provider_not_ready_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+                patch.status.update({
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                })
+                return
+            raise
+
+        # Check if provider is ready
+        provider_status = provider_obj.get("status", {})
+        provider_conditions = provider_status.get("conditions", [])
+        provider_ready = any(
+            cond.get("type") == "Ready" and cond.get("status") == "True" for cond in provider_conditions
+        )
+
+        if not provider_ready:
+            error_msg = f"Provider {provider_name} is not ready"
+            logger.warning(error_msg)
+            conditions = status.get("conditions", [])
+            conditions = set_provider_not_ready_condition(conditions, error_msg)
+            emit_reconcile_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+            patch.status.update({
+                "conditions": conditions,
+                "observedGeneration": meta.get("generation", 0),
+            })
+            raise kopf.TemporaryError(error_msg)
+
+        # Create provider client
+        provider_spec = provider_obj.get("spec", {})
+        provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
+
+        # Convert policy to AWS format
+        import json
+        from .services.aws.client import AWSProvider
+        
+        if isinstance(provider_client, AWSProvider):
+            aws_policy = provider_client._convert_policy_to_aws_format(policy)
+            policy_json = json.dumps(aws_policy)
+        else:
+            policy_json = json.dumps(policy)
+
+        # Store policy for later attachment
+        # Note: In Wasabi/AWS IAM, policies are typically inline policies attached to users
+        # We store the policy in status for reference, but actual attachment happens when referenced by a User
+        conditions = status.get("conditions", [])
+        conditions = set_ready_condition(conditions, True, f"IAMPolicy {name} is ready")
+
+        # Update status
+        status_update = {
+            "observedGeneration": meta.get("generation", 0),
+            "applied": True,
+            "policyArn": f"arn:aws:iam::*:policy/{name}",  # Placeholder ARN
+            "attachedUsers": [],  # Will be populated when users reference this policy
+            "lastSyncTime": datetime.now(timezone.utc).isoformat(),
+            "conditions": conditions,
+        }
+
+        metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="success").inc()
+        patch.status.update(status_update)
+    except Exception as e:
+        logger.error(f"IAMPolicy reconciliation failed for {name}: {e}")
+        emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
+        metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="error").inc()
+        raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_IAM_POLICY).observe(duration)
+
+
+@kopf.on.delete(API_GROUP_VERSION, KIND_IAM_POLICY)
+def handle_iampolicy_delete(
+    spec: dict[str, Any],
+    meta: dict[str, Any],
+    **kwargs: Any,
+) -> None:
+    """Handle IAMPolicy resource deletion."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    name = meta.get("name", "unknown")
+
+    logger.info(f"IAMPolicy {name} is being deleted")
+    # Policy deletion is handled via owner references when users are deleted
 

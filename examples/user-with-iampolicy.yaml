@@ -1,0 +1,14 @@
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: User
+metadata:
+  name: my-app-user
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: my-app-user
+  policyRef:
+    name: bucket-readwrite-policy
+  tags:
+    Environment: production
+    Application: my-app
+

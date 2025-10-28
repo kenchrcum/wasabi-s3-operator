@@ -25,6 +25,7 @@ rules:
       - bucketpolicies
       - accesskeys
       - users
+      - iampolicies
     verbs:
       - get
       - list
@@ -43,6 +44,7 @@ rules:
       - bucketpolicies/status
       - accesskeys/status
       - users/status
+      - iampolicies/status
     verbs:
       - get
       - update
