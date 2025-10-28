@@ -1,0 +1,56 @@
+---
+# Example: Bucket with deletion policy set to Delete
+# This demonstrates how to configure a bucket that will be deleted from S3
+# when the Kubernetes resource is deleted
+
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: temporary-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: temporary-bucket
+  # Deletion policy set to Delete will remove the bucket from S3
+  deletionPolicy: Delete
+  # forceDelete: when true, empty the bucket before deletion if it's not empty
+  # Warning: This will delete ALL objects in the bucket!
+  forceDelete: true
+  versioning:
+    enabled: false
+  encryption:
+    enabled: true
+    algorithm: AES256
+  tagging:
+    tags:
+      Environment: temporary
+      Owner: platform-team
+      Purpose: temporary-storage
+
+---
+# Example: Bucket with Retain policy (default behavior)
+# The bucket will remain in S3 when the Kubernetes resource is deleted
+
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: Bucket
+metadata:
+  name: important-backup-bucket
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  name: important-backup-bucket
+  # Retain policy keeps the bucket in S3
+  # This is the default behavior - you can omit this field
+  deletionPolicy: Retain
+  versioning:
+    enabled: true
+  encryption:
+    enabled: true
+    algorithm: AES256
+  tagging:
+    tags:
+      Environment: production
+      Owner: platform-team
+      Purpose: backups
+      RetentionPolicy: long-term
+

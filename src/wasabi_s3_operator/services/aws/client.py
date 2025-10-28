@@ -131,10 +131,103 @@ class AWSProvider:
             logger.error(f"Failed to create bucket {name}: {e}")
             raise
 
-    def delete_bucket(self, name: str) -> None:
-        """Delete a bucket."""
+    def is_bucket_empty(self, name: str) -> bool:
+        """Check if a bucket is empty.
+        
+        Args:
+            name: Bucket name
+            
+        Returns:
+            True if bucket is empty, False otherwise
+        """
         try:
+            # Use list_objects_v2 to check if bucket has any objects
+            response = self.client.list_objects_v2(Bucket=name, MaxKeys=1)
+            # If there are any contents, the bucket is not empty
+            return not response.get("Contents", [])
+        except ClientError as e:
+            logger.error(f"Failed to check if bucket {name} is empty: {e}")
+            raise
+    
+    def empty_bucket(self, name: str) -> None:
+        """Empty a bucket by deleting all objects and versions.
+        
+        Args:
+            name: Bucket name
+        """
+        try:
+            logger.info(f"Emptying bucket {name}")
+            
+            # Check if versioning is enabled
+            versioning = self.get_bucket_versioning(name)
+            is_versioned = versioning.get("enabled", False)
+            
+            if is_versioned:
+                # Delete all object versions
+                logger.info(f"Bucket {name} has versioning enabled, deleting all versions")
+                paginator = self.client.get_paginator("list_object_versions")
+                
+                for page in paginator.paginate(Bucket=name):
+                    # Delete marker versions
+                    for delete_marker in page.get("DeleteMarkers", []):
+                        try:
+                            self.client.delete_object(
+                                Bucket=name,
+                                Key=delete_marker["Key"],
+                                VersionId=delete_marker["VersionId"]
+                            )
+                            logger.debug(f"Deleted delete marker: {delete_marker['Key']} (VersionId: {delete_marker['VersionId']})")
+                        except ClientError as e:
+                            logger.warning(f"Failed to delete delete marker {delete_marker['Key']}: {e}")
+                    
+                    # Delete object versions
+                    for obj in page.get("Versions", []):
+                        try:
+                            self.client.delete_object(
+                                Bucket=name,
+                                Key=obj["Key"],
+                                VersionId=obj["VersionId"]
+                            )
+                            logger.debug(f"Deleted object version: {obj['Key']} (VersionId: {obj['VersionId']})")
+                        except ClientError as e:
+                            logger.warning(f"Failed to delete object version {obj['Key']}: {e}")
+            else:
+                # Delete all objects
+                logger.info(f"Bucket {name} does not have versioning, deleting all objects")
+                paginator = self.client.get_paginator("list_objects_v2")
+                
+                for page in paginator.paginate(Bucket=name):
+                    for obj in page.get("Contents", []):
+                        try:
+                            self.client.delete_object(Bucket=name, Key=obj["Key"])
+                            logger.debug(f"Deleted object: {obj['Key']}")
+                        except ClientError as e:
+                            logger.warning(f"Failed to delete object {obj['Key']}: {e}")
+            
+            logger.info(f"Successfully emptied bucket {name}")
+        except ClientError as e:
+            logger.error(f"Failed to empty bucket {name}: {e}")
+            raise
+    
+    def delete_bucket(self, name: str, force: bool = False) -> None:
+        """Delete a bucket.
+        
+        Args:
+            name: Bucket name
+            force: If True, empty the bucket before deletion if it's not empty
+        """
+        try:
+            # Check if bucket is empty
+            if not self.is_bucket_empty(name):
+                if force:
+                    logger.info(f"Bucket {name} is not empty, emptying it before deletion")
+                    self.empty_bucket(name)
+                else:
+                    raise ValueError(f"Bucket {name} is not empty. Set force=True to empty it before deletion.")
+            
+            # Delete the bucket
             self.client.delete_bucket(Bucket=name)
+            logger.info(f"Successfully deleted bucket {name}")
         except ClientError as e:
             logger.error(f"Failed to delete bucket {name}: {e}")
             raise

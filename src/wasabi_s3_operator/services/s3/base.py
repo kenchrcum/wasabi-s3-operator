@@ -16,8 +16,21 @@ class S3Provider(Protocol):
         """Create a bucket with the given configuration."""
         ...
 
-    def delete_bucket(self, name: str) -> None:
-        """Delete a bucket."""
+    def is_bucket_empty(self, name: str) -> bool:
+        """Check if a bucket is empty."""
+        ...
+    
+    def empty_bucket(self, name: str) -> None:
+        """Empty a bucket by deleting all objects and versions."""
+        ...
+    
+    def delete_bucket(self, name: str, force: bool = False) -> None:
+        """Delete a bucket.
+        
+        Args:
+            name: Bucket name
+            force: If True, empty the bucket before deletion if it's not empty
+        """
         ...
 
     def bucket_exists(self, name: str) -> bool:

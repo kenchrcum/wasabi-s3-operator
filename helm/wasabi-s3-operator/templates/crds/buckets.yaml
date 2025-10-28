@@ -173,6 +173,20 @@ spec:
                       type: object
                       additionalProperties:
                         type: string
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Retain]
+                  default: Retain
+                  description: |
+                    Deletion policy for the bucket.
+                    - Delete: Empty and delete the bucket when the resource is deleted
+                    - Retain: Keep the bucket (only remove from operator management)
+                forceDelete:
+                  type: boolean
+                  default: false
+                  description: |
+                    When true and deletionPolicy is Delete, attempt to delete the bucket even if it's not empty.
+                    This will delete all objects in the bucket.
             status:
               type: object
               properties:

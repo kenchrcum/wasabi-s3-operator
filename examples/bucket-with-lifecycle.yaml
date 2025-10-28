@@ -6,6 +6,10 @@ spec:
   providerRef:
     name: wasabi-us-east-1
   name: logs-bucket
+  # Deletion policy: Retain by default (keeps bucket in S3)
+  # To delete bucket: set deletionPolicy: Delete and forceDelete: true
+  deletionPolicy: Retain
+  forceDelete: false
   lifecycle:
     rules:
       - id: delete-old-logs

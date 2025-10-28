@@ -616,6 +616,12 @@ def handle_bucket_delete(
 
     if bucket_name:
         try:
+            # Get deletion policy (default to Retain for safety)
+            deletion_policy = spec.get("deletionPolicy", "Retain")
+            force_delete = spec.get("forceDelete", False)
+            
+            logger.info(f"Deletion policy for bucket {bucket_name}: {deletion_policy}, forceDelete: {force_delete}")
+
             # Get provider
             provider_ref = spec.get("providerRef", {})
             provider_name = provider_ref.get("name")
@@ -643,11 +649,19 @@ def handle_bucket_delete(
                 provider_spec = provider_obj.get("spec", {})
                 provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
 
-                # Delete bucket
+                # Handle deletion based on policy
                 if provider_client.bucket_exists(bucket_name):
-                    provider_client.delete_bucket(bucket_name)
-                    emit_bucket_deleted(meta, bucket_name)
-                    logger.info(f"Deleted bucket {bucket_name}")
+                    if deletion_policy == "Delete":
+                        # Delete the bucket (will empty it if forceDelete is True)
+                        provider_client.delete_bucket(bucket_name, force=force_delete)
+                        emit_bucket_deleted(meta, bucket_name)
+                        logger.info(f"Deleted bucket {bucket_name}")
+                    else:
+                        # Retain policy - just log that we're keeping the bucket
+                        logger.info(f"Retaining bucket {bucket_name} per deletionPolicy=Retain")
+                        emit_bucket_deleted(meta, bucket_name)
+                else:
+                    logger.info(f"Bucket {bucket_name} does not exist, skipping deletion")
         except Exception as e:
             logger.error(f"Failed to delete bucket {bucket_name}: {e}")
             # Don't fail deletion if cleanup fails

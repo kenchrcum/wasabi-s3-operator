@@ -6,6 +6,13 @@ spec:
   providerRef:
     name: wasabi-us-east-1
   name: my-backup-bucket
+  # Deletion policy: controls what happens when this resource is deleted
+  # - Retain (default): Keep the bucket in S3, only remove from operator management
+  # - Delete: Delete the bucket from S3 when this resource is deleted
+  deletionPolicy: Retain
+  # forceDelete: when true, empty the bucket before deletion if it's not empty
+  # Only applies when deletionPolicy is Delete
+  forceDelete: false
   versioning:
     enabled: true
   encryption:
