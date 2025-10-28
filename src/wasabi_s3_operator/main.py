@@ -236,7 +236,7 @@ def handle_bucket(
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                error_msg = f"Provider {provider_name} not found"
+                error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
                 logger.error(error_msg)
                 conditions = status.get("conditions", [])
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
@@ -246,6 +246,8 @@ def handle_bucket(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                # Don't re-raise - return to stop retries until provider is created
+                return
             raise
 
         # Check if provider is ready
@@ -655,7 +657,7 @@ def handle_bucket_policy(
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                error_msg = f"Bucket {bucket_name} not found"
+                error_msg = f"Bucket {bucket_name} not found in namespace {bucket_ns}"
                 logger.error(error_msg)
                 conditions = status.get("conditions", [])
                 conditions = set_bucket_not_ready_condition(conditions, error_msg)
@@ -665,6 +667,8 @@ def handle_bucket_policy(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                # Don't re-raise - return to stop retries until bucket is created
+                return
             raise
 
         # Check if bucket is ready
@@ -891,7 +895,7 @@ def handle_access_key(
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                error_msg = f"Provider {provider_name} not found"
+                error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
                 logger.error(error_msg)
                 conditions = status.get("conditions", [])
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
@@ -901,6 +905,8 @@ def handle_access_key(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                # Don't re-raise - return to stop retries until provider is created
+                return
             raise
 
         # Check if provider is ready
@@ -949,7 +955,7 @@ def handle_access_key(
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                error_msg = f"User {user_name} not found"
+                error_msg = f"User {user_name} not found in namespace {user_ns}"
                 logger.error(error_msg)
                 conditions = status.get("conditions", [])
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
@@ -959,6 +965,8 @@ def handle_access_key(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                # Don't re-raise - return to stop retries until user is created
+                return
             raise
 
         # Check if user is ready
@@ -1154,7 +1162,7 @@ def handle_user(
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                error_msg = f"Provider {provider_name} not found"
+                error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
                 logger.error(error_msg)
                 conditions = status.get("conditions", [])
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
@@ -1164,6 +1172,8 @@ def handle_user(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                # Don't re-raise - return to stop retries until provider is created
+                return
             raise
 
         # Check if provider is ready
