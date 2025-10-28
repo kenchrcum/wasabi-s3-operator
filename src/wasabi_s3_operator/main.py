@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -307,11 +308,17 @@ def handle_bucket(
         auto_manage = spec.get("autoManage", {})
         auto_manage_enabled = auto_manage.get("enabled", True)
         
+        # Initialize variables for status update
+        accesskey_crd_name = None
+        
         if auto_manage_enabled:
             try:
                 # Determine user name
                 user_name = auto_manage.get("userName", bucket_name)
                 access_level = auto_manage.get("accessLevel", "readwrite")
+                
+                # Initialize accesskey_crd_name for status update
+                accesskey_crd_name = f"{name}-accesskey"
                 
                 # Step 1: Create User with inline IAM policy
                 user_crd_name = f"{name}-user"
@@ -341,6 +348,7 @@ def handle_bucket(
                 }
 
                 # Check if user already exists
+                user_ready = False
                 try:
                     existing_user = api.get_namespaced_custom_object(
                         group="s3.cloud37.dev",
@@ -350,6 +358,12 @@ def handle_bucket(
                         name=user_crd_name,
                     )
                     logger.info(f"User {user_crd_name} already exists")
+                    # Check if user is ready
+                    user_status = existing_user.get("status", {})
+                    user_conditions = user_status.get("conditions", [])
+                    user_ready = any(
+                        cond.get("type") == "Ready" and cond.get("status") == "True" for cond in user_conditions
+                    )
                 except client.exceptions.ApiException as e:
                     if e.status == 404:
                         # Create user with inline policy
@@ -386,56 +400,92 @@ def handle_bucket(
                             body=user_body,
                         )
                         logger.info(f"Created user {user_crd_name} with inline policy")
+                        
+                        # Wait for user to be ready before creating access key
+                        max_wait_time = 60  # Maximum wait time in seconds
+                        wait_interval = 1  # Check every second
+                        elapsed_time = 0
+                        
+                        while not user_ready and elapsed_time < max_wait_time:
+                            time.sleep(wait_interval)
+                            elapsed_time += wait_interval
+                            
+                            try:
+                                user_obj = api.get_namespaced_custom_object(
+                                    group="s3.cloud37.dev",
+                                    version="v1alpha1",
+                                    namespace=namespace,
+                                    plural="users",
+                                    name=user_crd_name,
+                                )
+                                user_status = user_obj.get("status", {})
+                                user_conditions = user_status.get("conditions", [])
+                                user_ready = any(
+                                    cond.get("type") == "Ready" and cond.get("status") == "True" for cond in user_conditions
+                                )
+                                
+                                if user_ready:
+                                    logger.info(f"User {user_crd_name} is now ready")
+                                else:
+                                    logger.debug(f"Waiting for user {user_crd_name} to be ready... ({elapsed_time}s)")
+                            except client.exceptions.ApiException:
+                                # User not found yet, continue waiting
+                                pass
+                        
+                        if not user_ready:
+                            logger.warning(f"User {user_crd_name} not ready after {max_wait_time}s, proceeding anyway")
                     else:
                         raise
                 
-                # Step 2: Create AccessKey
-                accesskey_crd_name = f"{name}-accesskey"
-                try:
-                    existing_key = api.get_namespaced_custom_object(
-                        group="s3.cloud37.dev",
-                        version="v1alpha1",
-                        namespace=namespace,
-                        plural="accesskeys",
-                        name=accesskey_crd_name,
-                    )
-                    logger.info(f"AccessKey {accesskey_crd_name} already exists")
-                except client.exceptions.ApiException as e:
-                    if e.status == 404:
-                        rotation_config = auto_manage.get("rotation", {})
-                        accesskey_body = {
-                            "apiVersion": "s3.cloud37.dev/v1alpha1",
-                            "kind": "AccessKey",
-                            "metadata": {
-                                "name": accesskey_crd_name,
-                                "namespace": namespace,
-                                "ownerReferences": [
-                                    {
-                                        "apiVersion": "s3.cloud37.dev/v1alpha1",
-                                        "kind": "Bucket",
-                                        "name": name,
-                                        "uid": meta.get("uid"),
-                                        "controller": True,
-                                    }
-                                ],
-                            },
-                            "spec": {
-                                "providerRef": {"name": provider_name, "namespace": provider_ns},
-                                "userRef": {"name": user_crd_name},
-                                "displayName": f"Access key for bucket {bucket_name}",
-                                "rotate": rotation_config,
-                            },
-                        }
-                        api.create_namespaced_custom_object(
+                # Step 2: Create AccessKey (only if user is ready)
+                if user_ready:
+                    try:
+                        existing_key = api.get_namespaced_custom_object(
                             group="s3.cloud37.dev",
                             version="v1alpha1",
                             namespace=namespace,
                             plural="accesskeys",
-                            body=accesskey_body,
+                            name=accesskey_crd_name,
                         )
-                        logger.info(f"Created access key {accesskey_crd_name}")
-                    else:
-                        raise
+                        logger.info(f"AccessKey {accesskey_crd_name} already exists")
+                    except client.exceptions.ApiException as e:
+                        if e.status == 404:
+                            rotation_config = auto_manage.get("rotation", {})
+                            accesskey_body = {
+                                "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                "kind": "AccessKey",
+                                "metadata": {
+                                    "name": accesskey_crd_name,
+                                    "namespace": namespace,
+                                    "ownerReferences": [
+                                        {
+                                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                                            "kind": "Bucket",
+                                            "name": name,
+                                            "uid": meta.get("uid"),
+                                            "controller": True,
+                                        }
+                                    ],
+                                },
+                                "spec": {
+                                    "providerRef": {"name": provider_name, "namespace": provider_ns},
+                                    "userRef": {"name": user_crd_name},
+                                    "displayName": f"Access key for bucket {bucket_name}",
+                                    "rotate": rotation_config,
+                                },
+                            }
+                            api.create_namespaced_custom_object(
+                                group="s3.cloud37.dev",
+                                version="v1alpha1",
+                                namespace=namespace,
+                                plural="accesskeys",
+                                body=accesskey_body,
+                            )
+                            logger.info(f"Created access key {accesskey_crd_name}")
+                        else:
+                            raise
+                else:
+                    logger.warning(f"Skipping AccessKey creation for {name} as user {user_crd_name} is not ready")
                 
                 # Step 3: Create BucketPolicy to grant user access to bucket
                 bucketpolicy_crd_name = f"{name}-policy"
@@ -518,8 +568,7 @@ def handle_bucket(
         }
         
         # Add credentials secret reference if auto-management is enabled
-        if auto_manage_enabled:
-            accesskey_crd_name = f"{name}-accesskey"
+        if auto_manage_enabled and accesskey_crd_name:
             status_update["credentialsSecret"] = f"{accesskey_crd_name}-credentials"
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET, result="success").inc()
