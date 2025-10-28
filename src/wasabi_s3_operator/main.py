@@ -371,7 +371,7 @@ def handle_bucket(
                                 ],
                             },
                             "spec": {
-                                "providerRef": {"name": provider_name},
+                                "providerRef": {"name": provider_name, "namespace": provider_ns},
                                 "name": user_name,
                                 "policy": user_policy,
                                 "tags": {"ManagedBy": "wasabi-s3-operator", "Bucket": bucket_name},
@@ -420,7 +420,7 @@ def handle_bucket(
                                 ],
                             },
                             "spec": {
-                                "providerRef": {"name": provider_name},
+                                "providerRef": {"name": provider_name, "namespace": provider_ns},
                                 "userRef": {"name": user_crd_name},
                                 "displayName": f"Access key for bucket {bucket_name}",
                                 "rotate": rotation_config,
@@ -471,7 +471,7 @@ def handle_bucket(
                                 ],
                             },
                             "spec": {
-                                "bucketRef": {"name": name},
+                                "bucketRef": {"name": name, "namespace": namespace},
                                 "policy": {
                                     "version": "2012-10-17",
                                     "statement": [
