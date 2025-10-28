@@ -1348,9 +1348,10 @@ def handle_user(
                             })
                             raise kopf.TemporaryError(error_msg)
                         
-                        # Get the policy from the IAMPolicy spec
-                        policy = policy_obj.get("spec", {}).get("policy")
-                        logger.info(f"Using policy from IAMPolicy {policy_name}")
+                        # Mark that we'll attach the managed policy after user creation
+                        # Don't fetch the policy yet - we'll attach the managed policy instead
+                        logger.info(f"Will attach managed policy {policy_name} to user {user_name}")
+                        policy = None  # Set to None to indicate we're using policyRef
                     except client.exceptions.ApiException as e:
                         if e.status == 404:
                             error_msg = f"IAMPolicy {policy_name} not found in namespace {policy_ns}"
@@ -1386,9 +1387,26 @@ def handle_user(
                     }
                     logger.info(f"No policy provided, creating default policy for bucket {bucket_name}")
                 
-                logger.info(f"Creating user {user_name} with policy: {policy}")
-                user_response = provider_client.create_user(user_name, policy)
+                # Create user (with or without inline policy)
+                if policy:
+                    logger.info(f"Creating user {user_name} with inline policy: {policy}")
+                    user_response = provider_client.create_user(user_name, policy)
+                else:
+                    logger.info(f"Creating user {user_name} without inline policy")
+                    user_response = provider_client.create_user(user_name, None)
+                
                 user_id = user_response.get("User", {}).get("UserId")
+                
+                # If policyRef was specified, attach the managed policy
+                if policy_ref and policy_name:
+                    try:
+                        logger.info(f"Attaching managed policy {policy_name} to user {user_name}")
+                        provider_client.attach_managed_policy_to_user(user_name, policy_name)
+                        logger.info(f"Successfully attached managed policy {policy_name} to user {user_name}")
+                    except Exception as e:
+                        error_msg = f"Failed to attach managed policy {policy_name}: {str(e)}"
+                        logger.error(error_msg)
+                        # Don't fail user creation if policy attachment fails
                 
                 conditions = set_ready_condition(conditions, True, f"User {user_name} created")
                 logger.info(f"Created user {user_name} with ID {user_id}")
@@ -1604,21 +1622,49 @@ def handle_iampolicy(
         
         if isinstance(provider_client, AWSProvider):
             aws_policy = provider_client._convert_policy_to_aws_format(policy)
-            policy_json = json.dumps(aws_policy)
         else:
-            policy_json = json.dumps(policy)
+            aws_policy = policy
 
-        # Store policy for later attachment
-        # Note: In Wasabi/AWS IAM, policies are typically inline policies attached to users
-        # We store the policy in status for reference, but actual attachment happens when referenced by a User
+        # Create managed policy in Wasabi
         conditions = status.get("conditions", [])
-        conditions = set_ready_condition(conditions, True, f"IAMPolicy {name} is ready")
+        policy_arn = None
+        
+        try:
+            # Create or get the managed policy
+            tags = spec.get("tags", {})
+            description = f"IAMPolicy {name} managed by wasabi-s3-operator"
+            
+            policy_response = provider_client.create_managed_policy(
+                policy_name=name,
+                policy_document=aws_policy,
+                description=description
+            )
+            
+            # Extract policy ARN from response
+            policy_arn = policy_response.get("Policy", {}).get("Arn")
+            if not policy_arn:
+                policy_arn = f"arn:aws:iam::*:policy/{name}"
+            
+            logger.info(f"Created managed policy {name} with ARN {policy_arn}")
+            conditions = set_ready_condition(conditions, True, f"IAMPolicy {name} is ready")
+            
+        except Exception as e:
+            error_msg = f"Failed to create managed policy: {str(e)}"
+            logger.error(error_msg)
+            conditions = set_attach_failed_condition(conditions, error_msg)
+            emit_reconcile_failed(meta, error_msg)
+            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
+            patch.status.update({
+                "conditions": conditions,
+                "observedGeneration": meta.get("generation", 0),
+            })
+            raise
 
         # Update status
         status_update = {
             "observedGeneration": meta.get("generation", 0),
             "applied": True,
-            "policyArn": f"arn:aws:iam::*:policy/{name}",  # Placeholder ARN
+            "policyArn": policy_arn,
             "attachedUsers": [],  # Will be populated when users reference this policy
             "lastSyncTime": datetime.now(timezone.utc).isoformat(),
             "conditions": conditions,
@@ -1648,7 +1694,45 @@ def handle_iampolicy_delete(
 
     logger = logging.getLogger(__name__)
     name = meta.get("name", "unknown")
+    namespace = meta.get("namespace", "default")
 
     logger.info(f"IAMPolicy {name} is being deleted")
-    # Policy deletion is handled via owner references when users are deleted
+    
+    # Delete the managed policy from Wasabi
+    try:
+        provider_ref = spec.get("providerRef", {})
+        provider_name = provider_ref.get("name")
+        
+        if provider_name:
+            from kubernetes import client, config
+            
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                config.load_kube_config()
+            
+            api = client.CustomObjectsApi()
+            provider_ns = provider_ref.get("namespace", namespace)
+            
+            try:
+                provider_obj = api.get_namespaced_custom_object(
+                    group="s3.cloud37.dev",
+                    version="v1alpha1",
+                    namespace=provider_ns,
+                    plural="providers",
+                    name=provider_name,
+                )
+                
+                provider_spec = provider_obj.get("spec", {})
+                provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
+                
+                # Delete the managed policy
+                provider_client.delete_managed_policy(name)
+                logger.info(f"Deleted managed policy {name} from Wasabi")
+            except Exception as e:
+                logger.error(f"Failed to delete managed policy {name}: {e}")
+                # Don't fail deletion if cleanup fails
+    except Exception as e:
+        logger.error(f"Failed to delete IAMPolicy {name}: {e}")
+        # Don't fail deletion if cleanup fails
 

@@ -596,4 +596,133 @@ class AWSProvider:
         except ClientError as e:
             logger.error(f"Failed to attach inline policy {policy_name} to user {user_name}: {e}")
             raise
+    
+    def create_managed_policy(self, policy_name: str, policy_document: dict[str, Any], description: str = "") -> dict[str, Any]:
+        """Create a managed IAM policy.
+        
+        Args:
+            policy_name: Policy name
+            policy_document: Policy document dictionary
+            description: Optional policy description
+            
+        Returns:
+            Policy creation response
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            import json
+            policy_json = json.dumps(policy_document)
+            
+            response = self.iam_client.create_policy(
+                PolicyName=policy_name,
+                PolicyDocument=policy_json,
+                Description=description,
+            )
+            logger.info(f"Created managed policy {policy_name}")
+            return response
+        except ClientError as e:
+            # If policy already exists, return it
+            if e.response.get("Error", {}).get("Code") == "EntityAlreadyExists":
+                logger.info(f"Policy {policy_name} already exists, fetching existing policy")
+                try:
+                    # Get the account ID from error message or use wildcard
+                    policy_arn = f"arn:aws:iam::*:policy/{policy_name}"
+                    response = self.iam_client.get_policy(PolicyArn=policy_arn)
+                    return response
+                except Exception:
+                    # Try to list and find the policy
+                    response = self.iam_client.list_policies(Scope="Local")
+                    for policy in response.get("Policies", []):
+                        if policy.get("PolicyName") == policy_name:
+                            return {"Policy": policy}
+                    raise
+            logger.error(f"Failed to create managed policy {policy_name}: {e}")
+            raise
+    
+    def delete_managed_policy(self, policy_name: str) -> None:
+        """Delete a managed IAM policy.
+        
+        Args:
+            policy_name: Policy name
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            # First, get the policy ARN
+            response = self.iam_client.list_policies(Scope="Local")
+            policy_arn = None
+            for policy in response.get("Policies", []):
+                if policy.get("PolicyName") == policy_name:
+                    policy_arn = policy.get("Arn")
+                    break
+            
+            if policy_arn:
+                self.iam_client.delete_policy(PolicyArn=policy_arn)
+                logger.info(f"Deleted managed policy {policy_name}")
+            else:
+                logger.warning(f"Policy {policy_name} not found")
+        except ClientError as e:
+            logger.error(f"Failed to delete managed policy {policy_name}: {e}")
+            raise
+    
+    def attach_managed_policy_to_user(self, user_name: str, policy_name: str) -> None:
+        """Attach a managed policy to a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            # Get the policy ARN
+            response = self.iam_client.list_policies(Scope="Local")
+            policy_arn = None
+            for policy in response.get("Policies", []):
+                if policy.get("PolicyName") == policy_name:
+                    policy_arn = policy.get("Arn")
+                    break
+            
+            if policy_arn:
+                self.iam_client.attach_user_policy(UserName=user_name, PolicyArn=policy_arn)
+                logger.info(f"Attached managed policy {policy_name} to user {user_name}")
+            else:
+                logger.error(f"Policy {policy_name} not found")
+                raise ValueError(f"Policy {policy_name} not found")
+        except ClientError as e:
+            logger.error(f"Failed to attach managed policy {policy_name} to user {user_name}: {e}")
+            raise
+    
+    def detach_managed_policy_from_user(self, user_name: str, policy_name: str) -> None:
+        """Detach a managed policy from a user.
+        
+        Args:
+            user_name: User name
+            policy_name: Policy name
+        """
+        if not self.iam_client:
+            raise ValueError("IAM endpoint not configured")
+        
+        try:
+            # Get the policy ARN
+            response = self.iam_client.list_policies(Scope="Local")
+            policy_arn = None
+            for policy in response.get("Policies", []):
+                if policy.get("PolicyName") == policy_name:
+                    policy_arn = policy.get("Arn")
+                    break
+            
+            if policy_arn:
+                self.iam_client.detach_user_policy(UserName=user_name, PolicyArn=policy_arn)
+                logger.info(f"Detached managed policy {policy_name} from user {user_name}")
+            else:
+                initial_client_error = ValueError(f"Policy {policy_name} not found")
+                logger.warning(f"Policy {policy_name} not found when detaching: {initial_client_error}")
+        except ClientError as e:
+            logger.error(f"Failed to detach managed policy {policy_name} from user {user_name}: {e}")
+            raise
 
