@@ -24,8 +24,8 @@ bucket_operations_total = Counter(
 )
 
 # Provider connectivity metrics
-provider_connectivity = Counter(
-    "wasabi_s3_operator_provider_connectivity",
+provider_connectivity_total = Counter(
+    "wasabi_s3_operator_provider_connectivity_total",
     "Provider connectivity status changes",
     ["provider", "status"],
 )

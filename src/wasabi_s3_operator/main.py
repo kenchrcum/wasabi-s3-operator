@@ -92,6 +92,8 @@ def handle_provider(
     # Track reconciliation
     metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="started").inc()
 
+    # Track duration
+    start_time = time.time()
     try:
         # Validate spec
         if not spec.get("endpoint") or not spec.get("region"):
@@ -122,10 +124,13 @@ def handle_provider(
             try:
                 connected = provider.test_connectivity()
                 endpoint_message = "Endpoint is reachable" if connected else "Endpoint is unreachable"
+                # Track connectivity status
+                metrics.provider_connectivity_total.labels(provider=name, status="connected" if connected else "disconnected").inc()
             except Exception as e:
                 connected = False
                 endpoint_message = f"Connectivity test failed: {str(e)}"
                 logger.error(f"Connectivity test failed for {name}: {e}")
+                metrics.provider_connectivity_total.labels(provider=name, status="error").inc()
         else:
             connected = False
             endpoint_message = "Cannot test connectivity due to auth failure"
@@ -152,12 +157,15 @@ def handle_provider(
 
         # Update status directly via patch to avoid conflicts
         patch.status.update(status_update)
-
     except Exception as e:
         logger.error(f"Provider reconciliation failed for {name}: {e}")
         emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
         metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="error").inc()
         raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_PROVIDER).observe(duration)
 
 
 @kopf.on.delete(API_GROUP_VERSION, KIND_PROVIDER)
@@ -196,6 +204,8 @@ def handle_bucket(
     emit_reconcile_started(meta)
     metrics.reconcile_total.labels(kind=KIND_BUCKET, result="started").inc()
 
+    # Track duration
+    start_time = time.time()
     try:
         # Validate spec
         bucket_name = spec.get("name")
@@ -289,12 +299,14 @@ def handle_bucket(
                 provider_client.create_bucket(bucket_name, bucket_config)
                 emit_bucket_created(meta, bucket_name)
                 logger.info(f"Created bucket {bucket_name}")
+                metrics.bucket_operations_total.labels(operation="create", result="success").inc()
             except Exception as e:
                 error_msg = f"Failed to create bucket: {str(e)}"
                 logger.error(error_msg)
                 conditions = set_creation_failed_condition(conditions, error_msg)
                 emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
+                metrics.bucket_operations_total.labels(operation="create", result="failed").inc()
                 patch.status.update({
                     "exists": False,
                     "conditions": conditions,
@@ -303,6 +315,7 @@ def handle_bucket(
         else:
             emit_bucket_updated(meta, bucket_name)
             logger.info(f"Bucket {bucket_name} already exists")
+            metrics.bucket_operations_total.labels(operation="exists", result="success").inc()
 
         # Handle auto-management if enabled
         auto_manage = spec.get("autoManage", {})
@@ -573,12 +586,15 @@ def handle_bucket(
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET, result="success").inc()
         patch.status.update(status_update)
-
     except Exception as e:
         logger.error(f"Bucket reconciliation failed for {name}: {e}")
         emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
         metrics.reconcile_total.labels(kind=KIND_BUCKET, result="error").inc()
         raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_BUCKET).observe(duration)
 
 
 @kopf.on.delete(API_GROUP_VERSION, KIND_BUCKET)
@@ -658,6 +674,8 @@ def handle_bucket_policy(
     emit_reconcile_started(meta)
     metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="started").inc()
 
+    # Track duration
+    start_time = time.time()
     try:
         # Validate spec
         bucket_ref = spec.get("bucketRef", {})
@@ -818,12 +836,15 @@ def handle_bucket_policy(
 
         metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="success").inc()
         patch.status.update(status_update)
-
     except Exception as e:
         logger.error(f"BucketPolicy reconciliation failed for {name}: {e}")
         emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
         metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="error").inc()
         raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_BUCKET_POLICY).observe(duration)
 
 
 @kopf.on.delete(API_GROUP_VERSION, KIND_BUCKET_POLICY)
@@ -910,6 +931,8 @@ def handle_access_key(
     emit_reconcile_started(meta)
     metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="started").inc()
 
+    # Track duration
+    start_time = time.time()
     try:
         # Validate spec
         provider_ref = spec.get("providerRef", {})
@@ -1124,12 +1147,15 @@ def handle_access_key(
 
             metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
             patch.status.update(status_update)
-
     except Exception as e:
         logger.error(f"AccessKey reconciliation failed for {name}: {e}")
         emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
         metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="error").inc()
         raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_ACCESS_KEY).observe(duration)
 
 
 @kopf.on.delete(API_GROUP_VERSION, KIND_ACCESS_KEY)
@@ -1170,6 +1196,8 @@ def handle_user(
     emit_reconcile_started(meta)
     metrics.reconcile_total.labels(kind=KIND_USER, result="started").inc()
 
+    # Track duration
+    start_time = time.time()
     try:
         # Validate spec
         provider_ref = spec.get("providerRef", {})
@@ -1321,12 +1349,15 @@ def handle_user(
 
             metrics.reconcile_total.labels(kind=KIND_USER, result="success").inc()
             patch.status.update(status_update)
-
     except Exception as e:
         logger.error(f"User reconciliation failed for {name}: {e}")
         emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
         metrics.reconcile_total.labels(kind=KIND_USER, result="error").inc()
         raise
+    finally:
+        # Record duration
+        duration = time.time() - start_time
+        metrics.reconcile_duration_seconds.labels(kind=KIND_USER).observe(duration)
 
 
 @kopf.on.delete(API_GROUP_VERSION, KIND_USER)
