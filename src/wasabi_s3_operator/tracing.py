@@ -113,17 +113,17 @@ def trace_span(
     if kind:
         attrs["resource.kind"] = kind
     
-    span = tracer.start_as_current_span(name, attributes=attrs)
-    try:
-        yield span
-    except Exception as e:
-        if span:
-            span.record_exception(e)
-            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-        raise
-    finally:
-        if span:
-            span.end()
+    # start_as_current_span returns a context manager that manages the span lifecycle
+    span_context = tracer.start_as_current_span(name, attributes=attrs)
+    with span_context:
+        span = trace.get_current_span()
+        try:
+            yield span
+        except Exception as e:
+            if span and span.is_recording():
+                span.record_exception(e)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            raise
 
 
 def add_span_attribute(key: str, value: Any) -> None:
