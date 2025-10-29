@@ -208,7 +208,7 @@ class AccessKeyHandler(BaseHandler):
                 )
             else:
                 self._maintain_access_key(
-                    provider_client, iam_user_name, existing_key_id, name, namespace, status, patch,
+                    provider_client, iam_user_name, existing_key_id, name, namespace, meta, status, patch,
                     rotation_enabled, retention_days, conditions
                 )
 
@@ -399,6 +399,7 @@ class AccessKeyHandler(BaseHandler):
         existing_key_id: str,
         name: str,
         namespace: str,
+        meta: dict[str, Any],
         status: dict[str, Any],
         patch: kopf.Patch,
         rotation_enabled: bool,
