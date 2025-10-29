@@ -56,6 +56,45 @@ operator:
   metricsPort: 8080
 ```
 
+### Tracing Configuration (OpenTelemetry)
+
+The operator supports OpenTelemetry tracing for observability. Tracing is disabled by default since it requires a tracing collector to be available.
+
+```yaml
+tracing:
+  # Enable/disable tracing
+  enabled: false
+  
+  # OTLP exporter endpoint
+  # Examples:
+  #   - http://opentelemetry-collector:4317 (service in same namespace)
+  #   - http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317 (service in different namespace)
+  #   - http://tracing.example.com:4317 (external endpoint)
+  endpoint: "http://localhost:4317"
+  
+  # Service name for tracing
+  serviceName: "wasabi-s3-operator"
+  
+  # Service version (optional, defaults to Chart.AppVersion)
+  serviceVersion: ""
+```
+
+To enable tracing with an OpenTelemetry Collector in the same namespace:
+
+```yaml
+tracing:
+  enabled: true
+  endpoint: "http://opentelemetry-collector:4317"
+```
+
+Or with a collector in a different namespace:
+
+```yaml
+tracing:
+  enabled: true
+  endpoint: "http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317"
+```
+
 ### RBAC Configuration
 
 ```yaml

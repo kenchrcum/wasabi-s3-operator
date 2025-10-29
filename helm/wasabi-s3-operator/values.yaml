@@ -20,6 +20,24 @@ operator:
   # Metrics port
   metricsPort: 8080
 
+# OpenTelemetry tracing configuration
+tracing:
+  # Enable/disable tracing (set to false if no tracing collector is available)
+  enabled: false
+  
+  # OTLP exporter endpoint (default: http://localhost:4317)
+  # Examples:
+  #   - http://opentelemetry-collector:4317 (service in same namespace)
+  #   - http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317 (service in different namespace)
+  #   - http://tracing.example.com:4317 (external endpoint)
+  endpoint: "http://localhost:4317"
+  
+  # Service name for tracing (default: wasabi-s3-operator)
+  serviceName: "wasabi-s3-operator"
+  
+  # Service version for tracing (default: uses Chart.AppVersion or "unknown")
+  serviceVersion: ""
+
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
