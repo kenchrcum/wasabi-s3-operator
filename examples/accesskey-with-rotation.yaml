@@ -2,9 +2,14 @@ apiVersion: s3.cloud37.dev/v1alpha1
 kind: AccessKey
 metadata:
   name: application-key
+  labels:
+    app: api-server
+    environment: production
 spec:
   providerRef:
     name: wasabi-us-east-1
+  userRef:
+    name: application-user
   displayName: Application Service Key
   tags:
     Environment: production
@@ -13,4 +18,34 @@ spec:
     enabled: true
     intervalDays: 90
     previousKeysRetentionDays: 7
+---
+# Example: AccessKey with rotation for high-security environment
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: AccessKey
+metadata:
+  name: secure-service-key
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  userRef:
+    name: secure-service-user
+  displayName: Secure Service Key
+  rotate:
+    enabled: true
+    intervalDays: 30              # Rotate every 30 days
+    previousKeysRetentionDays: 0  # Delete old keys immediately
+---
+# Example: AccessKey without rotation for development
+apiVersion: s3.cloud37.dev/v1alpha1
+kind: AccessKey
+metadata:
+  name: dev-service-key
+spec:
+  providerRef:
+    name: wasabi-us-east-1
+  userRef:
+    name: dev-service-user
+  displayName: Development Service Key
+  rotate:
+    enabled: false  # Disable rotation for development
 

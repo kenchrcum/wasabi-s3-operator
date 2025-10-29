@@ -114,12 +114,12 @@ helm install wasabi-s3-operator ./helm/wasabi-s3-operator \
    - [ ] Bucket notification support (if available on Wasabi)
    - [ ] Cross-region replication support
 
-3. **Access Key Rotation**
-   - [ ] Implement rotation logic
-   - [ ] Handle retention periods
-   - [ ] Manage previous keys
-   - [ ] Update secrets seamlessly
-   - [ ] Test rotation with active workloads
+3. **Access Key Rotation** ✅
+   - [x] Implement rotation logic
+   - [x] Handle retention periods
+   - [x] Manage previous keys
+   - [x] Update secrets seamlessly
+   - [x] Test rotation with active workloads
 
 4. **Documentation Improvements**
    - [ ] Add Wasabi-specific best practices guide

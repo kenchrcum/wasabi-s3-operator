@@ -35,7 +35,7 @@ from .utils.conditions import (
     set_endpoint_reachable_condition,
     set_ready_condition,
 )
-from .utils.access_keys import create_access_key_secret
+from .utils.access_keys import create_access_key_secret, update_access_key_secret
 from .utils.events import (
     emit_access_key_created,
     emit_access_key_rotated,
@@ -1089,9 +1089,31 @@ def handle_access_key(
         # Check if access key already exists
         existing_key_id = status.get("accessKeyId")
         conditions = status.get("conditions", [])
+        annotations = meta.get("annotations", {})
+
+        # Check if rotation is enabled and needed
+        rotate_config = spec.get("rotate", {})
+        rotation_enabled = rotate_config.get("enabled", False)
+        rotation_interval_days = rotate_config.get("intervalDays", 90)
+        retention_days = rotate_config.get("previousKeysRetentionDays", 7)
+
+        needs_rotation = False
+        if rotation_enabled and existing_key_id:
+            # Check if we need to rotate
+            next_rotate_time_str = status.get("nextRotateTime")
+            if next_rotate_time_str:
+                from datetime import datetime
+                try:
+                    next_rotate_time = datetime.fromisoformat(next_rotate_time_str.replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    if now >= next_rotate_time:
+                        needs_rotation = True
+                        logger.info(f"Access key {existing_key_id} needs rotation")
+                except Exception as e:
+                    logger.warning(f"Failed to parse nextRotateTime: {e}")
 
         if not existing_key_id:
-            # Create access key for the user via IAM
+            # Create initial access key for the user via IAM
             try:
                 key_response = provider_client.create_access_key(iam_user_name)
                 access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
@@ -1126,6 +1148,13 @@ def handle_access_key(
                     else:
                         raise
 
+                # Calculate next rotation time if rotation is enabled
+                last_rotate_time = datetime.now(timezone.utc).isoformat()
+                next_rotate_time = None
+                if rotation_enabled:
+                    from datetime import timedelta
+                    next_rotate_time = (datetime.now(timezone.utc) + timedelta(days=rotation_interval_days)).isoformat()
+
                 # Set ready condition
                 conditions = set_ready_condition(conditions, True, f"Access key {access_key_id} created for user {iam_user_name}")
 
@@ -1136,6 +1165,10 @@ def handle_access_key(
                     "created": True,
                     "conditions": conditions,
                 }
+                
+                if rotation_enabled:
+                    status_update["lastRotateTime"] = last_rotate_time
+                    status_update["nextRotateTime"] = next_rotate_time
 
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
                 patch.status.update(status_update)
@@ -1149,9 +1182,141 @@ def handle_access_key(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+        elif needs_rotation:
+            # Rotate the access key
+            try:
+                logger.info(f"Rotating access key {existing_key_id} for user {iam_user_name}")
+                
+                # Create new access key
+                key_response = provider_client.create_access_key(iam_user_name)
+                new_access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
+                new_secret_access_key = key_response.get("AccessKey", {}).get("SecretAccessKey")
+                
+                logger.info(f"Created new access key {new_access_key_id}")
+                
+                # Update the secret
+                secret_name = f"{name}-credentials"
+                core_api = client.CoreV1Api()
+                update_access_key_secret(
+                    core_api,
+                    namespace,
+                    secret_name,
+                    new_access_key_id,
+                    new_secret_access_key,
+                )
+                logger.info(f"Updated secret {secret_name} with new credentials")
+                
+                # Store previous key info in annotations for tracking
+                previous_keys = annotations.get("s3.cloud37.dev/previous-keys", "[]")
+                import json
+                try:
+                    previous_keys_list = json.loads(previous_keys)
+                except Exception:
+                    previous_keys_list = []
+                
+                # Add the old key to previous keys with timestamp
+                previous_keys_list.append({
+                    "accessKeyId": existing_key_id,
+                    "rotatedAt": datetime.now(timezone.utc).isoformat(),
+                })
+                
+                # Keep only the most recent keys (limit to retention period worth)
+                max_keys_to_keep = retention_days
+                previous_keys_list = previous_keys_list[-max_keys_to_keep:]
+                
+                patch.metadata["annotations"] = {
+                    **annotations,
+                    "s3.cloud37.dev/previous-keys": json.dumps(previous_keys_list),
+                }
+                
+                # Delete the old access key immediately (not waiting for retention)
+                # Note: Actual deletion should happen after retention period
+                # For now, we'll mark it for deletion via annotations
+                logger.info(f"Old access key {existing_key_id} marked for deletion")
+                
+                # Calculate next rotation time
+                from datetime import timedelta
+                last_rotate_time = datetime.now(timezone.utc).isoformat()
+                next_rotate_time = (datetime.now(timezone.utc) + timedelta(days=rotation_interval_days)).isoformat()
+                
+                # Emit rotation event
+                emit_access_key_rotated(meta, new_access_key_id)
+                
+                # Set ready condition
+                conditions = set_ready_condition(conditions, True, f"Access key rotated to {new_access_key_id}")
+                
+                # Update status
+                status_update = {
+                    "observedGeneration": meta.get("generation", 0),
+                    "accessKeyId": new_access_key_id,
+                    "created": True,
+                    "lastRotateTime": last_rotate_time,
+                    "nextRotateTime": next_rotate_time,
+                    "conditions": conditions,
+                }
+                
+                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
+                patch.status.update(status_update)
+                
+            except Exception as e:
+                error_msg = f"Failed to rotate access key: {str(e)}"
+                logger.error(error_msg)
+                conditions = set_rotation_failed_condition(conditions, error_msg)
+                emit_reconcile_failed(meta, error_msg)
+                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
+                patch.status.update({
+                    "conditions": conditions,
+                    "observedGeneration": meta.get("generation", 0),
+                })
         else:
-            # Access key already exists
+            # Access key already exists, no rotation needed
             logger.info(f"Access key {existing_key_id} already exists")
+            
+            # Check if we need to cleanup expired previous keys
+            if rotation_enabled:
+                annotations_dict = annotations
+                previous_keys_str = annotations_dict.get("s3.cloud37.dev/previous-keys", "[]")
+                import json
+                try:
+                    previous_keys_list = json.loads(previous_keys_str)
+                    
+                    # Filter out expired keys
+                    expired_keys = []
+                    valid_keys = []
+                    now = datetime.now(timezone.utc)
+                    
+                    for key_info in previous_keys_list:
+                        rotated_at_str = key_info.get("rotatedAt")
+                        try:
+                            rotated_at = datetime.fromisoformat(rotated_at_str.replace('Z', '+00:00'))
+                            age_days = (now - rotated_at).days
+                            
+                            if age_days >= retention_days:
+                                expired_keys.append(key_info.get("accessKeyId"))
+                            else:
+                                valid_keys.append(key_info)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse rotatedAt for key: {e}")
+                            valid_keys.append(key_info)  # Keep it if we can't parse
+                    
+                    # Delete expired keys from Wasabi
+                    for expired_key_id in expired_keys:
+                        try:
+                            provider_client.delete_access_key(iam_user_name, expired_key_id)
+                            logger.info(f"Deleted expired access key {expired_key_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to delete expired access key {expired_key_id}: {e}")
+                    
+                    # Update annotations if we removed keys
+                    if len(expired_keys) > 0:
+                        patch.metadata["annotations"] = {
+                            **annotations_dict,
+                            "s3.cloud37.dev/previous-keys": json.dumps(valid_keys),
+                        }
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to parse previous keys: {e}")
+            
             conditions = set_ready_condition(conditions, True, f"Access key {existing_key_id} is ready")
 
             status_update = {
@@ -1160,6 +1325,13 @@ def handle_access_key(
                 "created": True,
                 "conditions": conditions,
             }
+            
+            # Preserve rotation times if they exist
+            if rotation_enabled:
+                if status.get("lastRotateTime"):
+                    status_update["lastRotateTime"] = status.get("lastRotateTime")
+                if status.get("nextRotateTime"):
+                    status_update["nextRotateTime"] = status.get("nextRotateTime")
 
             metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="success").inc()
             patch.status.update(status_update)
