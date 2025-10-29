@@ -8,10 +8,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 import kopf
-from prometheus_client import start_http_server
+from prometheus_client import make_wsgi_app
+from werkzeug.serving import make_server
+import threading
 
+from . import health
 from . import logging as structured_logging
 from . import metrics
+from .utils.errors import sanitize_exception
 from .builders.bucket import create_bucket_config_from_spec
 from .builders.provider import create_provider_from_spec
 from .constants import (
@@ -196,9 +200,12 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     settings.execution.max_retries = 5  # Maximum retry attempts
     settings.execution.backoff_jitter = 0.1  # 10% jitter to prevent thundering herd
 
-    # Start metrics HTTP server on port 8080
+    # Start metrics HTTP server with health check endpoints on port 8080
     metrics_port = int(os.getenv("METRICS_PORT", "8080"))
-    start_http_server(metrics_port)
+    combined_app = health.create_combined_wsgi_app()
+    server = make_server("", metrics_port, combined_app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_PROVIDER)
@@ -249,8 +256,11 @@ def handle_provider(
             auth_message = "Authentication successful"
         except Exception as e:
             auth_valid = False
-            auth_message = f"Authentication failed: {str(e)}"
-            logger.error(f"Failed to create provider for {name}: {e}")
+            sanitized_error = sanitize_exception(e)
+            auth_message = f"Authentication failed: {sanitized_error}"
+            error_type = type(e).__name__
+            metrics.error_total.labels(kind=KIND_PROVIDER, error_type=error_type).inc()
+            logger.error(f"Failed to create provider for {name}: {sanitized_error}")
 
         conditions = set_auth_valid_condition(conditions, auth_valid, auth_message)
 
@@ -263,8 +273,11 @@ def handle_provider(
                 metrics.provider_connectivity_total.labels(provider=name, status="connected" if connected else "disconnected").inc()
             except Exception as e:
                 connected = False
-                endpoint_message = f"Connectivity test failed: {str(e)}"
-                logger.error(f"Connectivity test failed for {name}: {e}")
+                sanitized_error = sanitize_exception(e)
+                endpoint_message = f"Connectivity test failed: {sanitized_error}"
+                error_type = type(e).__name__
+                metrics.error_total.labels(kind=KIND_PROVIDER, error_type=error_type).inc()
+                logger.error(f"Connectivity test failed for {name}: {sanitized_error}")
                 metrics.provider_connectivity_total.labels(provider=name, status="error").inc()
         else:
             connected = False
@@ -287,15 +300,21 @@ def handle_provider(
 
         if ready:
             metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="success").inc()
+            metrics.resource_status_total.labels(kind=KIND_PROVIDER, status="ready").inc()
         else:
             metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="failed").inc()
+            metrics.resource_status_total.labels(kind=KIND_PROVIDER, status="not_ready").inc()
 
         # Update status directly via patch to avoid conflicts
         patch.status.update(status_update)
     except Exception as e:
-        logger.error(f"Provider reconciliation failed for {name}: {e}")
-        emit_reconcile_failed(meta, f"Reconciliation failed: {str(e)}")
+        sanitized_error = sanitize_exception(e)
+        error_type = type(e).__name__
+        metrics.error_total.labels(kind=KIND_PROVIDER, error_type=error_type).inc()
+        logger.error(f"Provider reconciliation failed for {name}: {sanitized_error}")
+        emit_reconcile_failed(meta, f"Reconciliation failed: {sanitized_error}")
         metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="error").inc()
+        metrics.resource_status_total.labels(kind=KIND_PROVIDER, status="error").inc()
         raise
     finally:
         # Record duration

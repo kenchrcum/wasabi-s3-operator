@@ -1,6 +1,6 @@
 """Prometheus metrics for the Wasabi S3 Operator Operator."""
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 # Reconciliation metrics
 reconcile_total = Counter(
@@ -55,5 +55,19 @@ rate_limit_hits_total = Counter(
     "wasabi_s3_operator_rate_limit_hits_total",
     "Total number of rate limit hits",
     ["api_type"],
+)
+
+# Error metrics
+error_total = Counter(
+    "wasabi_s3_operator_error_total",
+    "Total number of errors by type",
+    ["kind", "error_type"],
+)
+
+# Resource status metrics
+resource_status_total = Counter(
+    "wasabi_s3_operator_resource_status_total",
+    "Total count of resources by kind and status (incremented per reconciliation)",
+    ["kind", "status"],
 )
 
