@@ -6,12 +6,19 @@ from .access_keys import (
     generate_secret_access_key,
     update_access_key_secret,
 )
+from .cache import (
+    get_cached_object,
+    invalidate_cache,
+    make_cache_key,
+    set_cached_object,
+)
 from .conditions import (
     set_bucket_not_ready_condition,
     set_provider_not_ready_condition,
     update_condition,
 )
 from .events import emit_event
+from .rate_limit import handle_rate_limit_error, rate_limit_k8s, rate_limit_wasabi
 from .secrets import get_secret_value
 
 __all__ = [
@@ -24,5 +31,12 @@ __all__ = [
     "generate_secret_access_key",
     "create_access_key_secret",
     "update_access_key_secret",
+    "get_cached_object",
+    "set_cached_object",
+    "invalidate_cache",
+    "make_cache_key",
+    "rate_limit_k8s",
+    "rate_limit_wasabi",
+    "handle_rate_limit_error",
 ]
 

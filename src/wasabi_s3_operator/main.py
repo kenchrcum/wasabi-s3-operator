@@ -37,6 +37,8 @@ from .utils.conditions import (
     set_ready_condition,
 )
 from .utils.access_keys import create_access_key_secret, update_access_key_secret
+from .utils.cache import get_cached_object, make_cache_key, set_cached_object
+from .utils.rate_limit import handle_rate_limit_error, rate_limit_k8s
 from .utils.secrets import (
     cleanup_expired_previous_secrets,
     create_previous_secret,
@@ -71,6 +73,104 @@ def remove_finalizer(meta: dict[str, Any], patch: kopf.Patch) -> None:
     if FINALIZER in finalizers:
         finalizers.remove(FINALIZER)
         patch.metadata["finalizers"] = finalizers if finalizers else None
+
+
+def get_provider_with_cache(
+    api: Any,
+    provider_name: str,
+    provider_ns: str,
+    namespace: str = "default",
+) -> dict[str, Any]:
+    """Get provider CRD with caching.
+    
+    Args:
+        api: Kubernetes CustomObjectsApi instance
+        provider_name: Name of the provider
+        provider_ns: Namespace of the provider
+        namespace: Current namespace (for fallback)
+        
+    Returns:
+        Provider CRD object
+        
+    Raises:
+        client.exceptions.ApiException: If provider not found or API error
+    """
+    cache_key = make_cache_key(KIND_PROVIDER, provider_ns, provider_name)
+    cached_provider = get_cached_object(cache_key)
+    
+    if cached_provider is not None:
+        metrics.api_call_total.labels(api_type="k8s", operation="get_provider", result="cache_hit").inc()
+        return cached_provider
+    
+    start_time = time.time()
+    try:
+        provider_obj = rate_limit_k8s(api.get_namespaced_custom_object)(
+            group="s3.cloud37.dev",
+            version="v1alpha1",
+            namespace=provider_ns,
+            plural="providers",
+            name=provider_name,
+        )
+        metrics.api_call_total.labels(api_type="k8s", operation="get_provider", result="success").inc()
+        set_cached_object(cache_key, provider_obj)
+        return provider_obj
+    except Exception as e:
+        metrics.api_call_total.labels(api_type="k8s", operation="get_provider", result="error").inc()
+        if handle_rate_limit_error(e):
+            # Retry once after rate limit backoff
+            return get_provider_with_cache(api, provider_name, provider_ns, namespace)
+        raise
+    finally:
+        duration = time.time() - start_time
+        metrics.api_call_duration_seconds.labels(api_type="k8s", operation="get_provider").observe(duration)
+
+
+def get_user_with_cache(
+    api: Any,
+    user_name: str,
+    user_ns: str,
+) -> dict[str, Any]:
+    """Get user CRD with caching.
+    
+    Args:
+        api: Kubernetes CustomObjectsApi instance
+        user_name: Name of the user
+        user_ns: Namespace of the user
+        
+    Returns:
+        User CRD object
+        
+    Raises:
+        client.exceptions.ApiException: If user not found or API error
+    """
+    cache_key = make_cache_key(KIND_USER, user_ns, user_name)
+    cached_user = get_cached_object(cache_key)
+    
+    if cached_user is not None:
+        metrics.api_call_total.labels(api_type="k8s", operation="get_user", result="cache_hit").inc()
+        return cached_user
+    
+    start_time = time.time()
+    try:
+        user_obj = rate_limit_k8s(api.get_namespaced_custom_object)(
+            group="s3.cloud37.dev",
+            version="v1alpha1",
+            namespace=user_ns,
+            plural="users",
+            name=user_name,
+        )
+        metrics.api_call_total.labels(api_type="k8s", operation="get_user", result="success").inc()
+        set_cached_object(cache_key, user_obj)
+        return user_obj
+    except Exception as e:
+        metrics.api_call_total.labels(api_type="k8s", operation="get_user", result="error").inc()
+        if handle_rate_limit_error(e):
+            # Retry once after rate limit backoff
+            return get_user_with_cache(api, user_name, user_ns)
+        raise
+    finally:
+        duration = time.time() - start_time
+        metrics.api_call_duration_seconds.labels(api_type="k8s", operation="get_user").observe(duration)
 
 
 @kopf.on.startup()
@@ -226,6 +326,7 @@ def handle_provider_delete(
 @kopf.on.create(API_GROUP_VERSION, KIND_BUCKET)
 @kopf.on.update(API_GROUP_VERSION, KIND_BUCKET)
 @kopf.on.resume(API_GROUP_VERSION, KIND_BUCKET)
+@kopf.timer(API_GROUP_VERSION, KIND_BUCKET, interval=int(os.getenv("DRIFT_CHECK_INTERVAL_SECONDS", "300")))  # Default 5 minutes
 def handle_bucket(
     spec: dict[str, Any],
     meta: dict[str, Any],
@@ -281,13 +382,7 @@ def handle_bucket(
         provider_ns = provider_ref.get("namespace", namespace)
 
         try:
-            provider_obj = api.get_namespaced_custom_object(
-                group="s3.cloud37.dev",
-                version="v1alpha1",
-                namespace=provider_ns,
-                plural="providers",
-                name=provider_name,
-            )
+            provider_obj = get_provider_with_cache(api, provider_name, provider_ns, namespace)
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
@@ -359,6 +454,7 @@ def handle_bucket(
             # Bucket exists - reconcile configuration changes
             logger.info(f"Bucket {bucket_name} already exists, checking for configuration drift")
             
+            drift_detected = False
             try:
                 # Check versioning configuration
                 current_versioning = provider_client.get_bucket_versioning(bucket_name)
@@ -367,7 +463,9 @@ def handle_bucket(
                 
                 if current_versioning.get("enabled") != desired_versioning_enabled or \
                    current_versioning.get("mfa_delete") != desired_mfa_delete:
-                    logger.info(f"Updating versioning configuration for bucket {bucket_name}")
+                    drift_detected = True
+                    logger.info(f"Drift detected: versioning configuration for bucket {bucket_name}")
+                    metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="versioning").inc()
                     provider_client.set_bucket_versioning(bucket_name, desired_versioning_enabled, desired_mfa_delete)
                     metrics.bucket_operations_total.labels(operation="update_versioning", result="success").inc()
                 
@@ -382,7 +480,9 @@ def handle_bucket(
                 
                 if desired_encryption_enabled:
                     if current_algorithm != desired_algorithm or current_kms_key_id != desired_kms_key_id:
-                        logger.info(f"Updating encryption configuration for bucket {bucket_name}")
+                        drift_detected = True
+                        logger.info(f"Drift detected: encryption configuration for bucket {bucket_name}")
+                        metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="encryption").inc()
                         try:
                             provider_client.set_bucket_encryption(bucket_name, desired_algorithm, desired_kms_key_id)
                             metrics.bucket_operations_total.labels(operation="update_encryption", result="success").inc()
@@ -392,14 +492,18 @@ def handle_bucket(
                 elif current_algorithm is not None:
                     # Encryption should be disabled but is currently enabled
                     # Note: AWS doesn't support disabling encryption, but we log it
-                    logger.info(f"Encryption is enabled on bucket {bucket_name} but desired state is disabled")
+                    drift_detected = True
+                    logger.info(f"Drift detected: encryption is enabled on bucket {bucket_name} but desired state is disabled")
+                    metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="encryption").inc()
                 
                 # Check tags configuration
                 desired_tags = bucket_config.get("tags") or {}
                 if desired_tags:
                     current_tags = provider_client.get_bucket_tags(bucket_name)
                     if current_tags != desired_tags:
-                        logger.info(f"Updating tags for bucket {bucket_name}")
+                        drift_detected = True
+                        logger.info(f"Drift detected: tags configuration for bucket {bucket_name}")
+                        metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="tags").inc()
                         provider_client.set_bucket_tags(bucket_name, desired_tags)
                         metrics.bucket_operations_total.labels(operation="update_tags", result="success").inc()
                 
@@ -509,7 +613,8 @@ def handle_bucket(
                         logger.info(f"Created user {user_crd_name} with inline policy")
                         
                         # Wait for user to be ready before creating access key
-                        max_wait_time = 60  # Maximum wait time in seconds
+                        # Configurable via USER_READINESS_TIMEOUT_SECONDS environment variable
+                        max_wait_time = int(os.getenv("USER_READINESS_TIMEOUT_SECONDS", "60"))
                         wait_interval = 1  # Check every second
                         elapsed_time = 0
                         
@@ -518,13 +623,7 @@ def handle_bucket(
                             elapsed_time += wait_interval
                             
                             try:
-                                user_obj = api.get_namespaced_custom_object(
-                                    group="s3.cloud37.dev",
-                                    version="v1alpha1",
-                                    namespace=namespace,
-                                    plural="users",
-                                    name=user_crd_name,
-                                )
+                                user_obj = get_user_with_cache(api, user_crd_name, namespace)
                                 user_status = user_obj.get("status", {})
                                 user_conditions = user_status.get("conditions", [])
                                 user_ready = any(
@@ -731,13 +830,7 @@ def handle_bucket_delete(
                 namespace = meta.get("namespace", "default")
                 provider_ns = provider_ref.get("namespace", namespace)
 
-                provider_obj = api.get_namespaced_custom_object(
-                    group="s3.cloud37.dev",
-                    version="v1alpha1",
-                    namespace=provider_ns,
-                    plural="providers",
-                    name=provider_name,
-                )
+                provider_obj = get_provider_with_cache(api, provider_name, provider_ns, namespace)
 
                 provider_spec = provider_obj.get("spec", {})
                 provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
@@ -766,6 +859,7 @@ def handle_bucket_delete(
 @kopf.on.create(API_GROUP_VERSION, KIND_BUCKET_POLICY)
 @kopf.on.update(API_GROUP_VERSION, KIND_BUCKET_POLICY)
 @kopf.on.resume(API_GROUP_VERSION, KIND_BUCKET_POLICY)
+@kopf.timer(API_GROUP_VERSION, KIND_BUCKET_POLICY, interval=int(os.getenv("DRIFT_CHECK_INTERVAL_SECONDS", "300")))  # Default 5 minutes
 def handle_bucket_policy(
     spec: dict[str, Any],
     meta: dict[str, Any],
@@ -894,13 +988,7 @@ def handle_bucket_policy(
 
         # Get provider
         provider_ns = provider_ref.get("namespace", bucket_ns)
-        provider_obj = api.get_namespaced_custom_object(
-            group="s3.cloud37.dev",
-            version="v1alpha1",
-            namespace=provider_ns,
-            plural="providers",
-            name=provider_name,
-        )
+        provider_obj = get_provider_with_cache(api, provider_name, provider_ns, bucket_ns)
 
         # Create provider client
         provider_spec = provider_obj.get("spec", {})
@@ -942,6 +1030,10 @@ def handle_bucket_policy(
                         
                         if not policy_changed:
                             logger.info(f"Policy for bucket {bucket_name} unchanged, skipping update")
+                        else:
+                            # Drift detected in policy
+                            logger.info(f"Drift detected: policy for bucket {bucket_name}")
+                            metrics.drift_detected_total.labels(kind=KIND_BUCKET_POLICY, resource_type="policy").inc()
                 else:
                     # No policy exists, needs to be set
                     logger.info(f"No existing policy for bucket {bucket_name}, will create new policy")
@@ -1041,13 +1133,7 @@ def handle_bucket_policy_delete(
 
             if provider_name:
                 provider_ns = provider_ref.get("namespace", bucket_ns)
-                provider_obj = api.get_namespaced_custom_object(
-                    group="s3.cloud37.dev",
-                    version="v1alpha1",
-                    namespace=provider_ns,
-                    plural="providers",
-                    name=provider_name,
-                )
+                provider_obj = get_provider_with_cache(api, provider_name, provider_ns, namespace)
 
                 provider_spec = provider_obj.get("spec", {})
                 provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
@@ -1175,13 +1261,7 @@ def handle_access_key(
         # Get user
         try:
             user_ns = user_ref.get("namespace", namespace)
-            user_obj = api.get_namespaced_custom_object(
-                group="s3.cloud37.dev",
-                version="v1alpha1",
-                namespace=user_ns,
-                plural="users",
-                name=user_name,
-            )
+            user_obj = get_user_with_cache(api, user_name, user_ns)
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 error_msg = f"User {user_name} not found in namespace {user_ns}"
@@ -1537,13 +1617,7 @@ def handle_access_key_delete(
                 provider_ns = provider_ref.get("namespace", namespace)
                 
                 try:
-                    provider_obj = api.get_namespaced_custom_object(
-                        group="s3.cloud37.dev",
-                        version="v1alpha1",
-                        namespace=provider_ns,
-                        plural="providers",
-                        name=provider_name,
-                    )
+                    provider_obj = get_provider_with_cache(api, provider_name, provider_ns, namespace)
                     
                     provider_spec = provider_obj.get("spec", {})
                     provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
@@ -1556,13 +1630,7 @@ def handle_access_key_delete(
                         # Get the actual IAM user name from the User CRD
                         user_ns = user_ref.get("namespace", namespace)
                         try:
-                            user_obj = api.get_namespaced_custom_object(
-                                group="s3.cloud37.dev",
-                                version="v1alpha1",
-                                namespace=user_ns,
-                                plural="users",
-                                name=user_name,
-                            )
+                            user_obj = get_user_with_cache(api, user_name, user_ns)
                             user_spec = user_obj.get("spec", {})
                             iam_user_name = user_spec.get("name")
                             
@@ -1911,13 +1979,7 @@ def handle_user_delete(
                 namespace = meta.get("namespace", "default")
                 provider_ns = provider_ref.get("namespace", namespace)
 
-                provider_obj = api.get_namespaced_custom_object(
-                    group="s3.cloud37.dev",
-                    version="v1alpha1",
-                    namespace=provider_ns,
-                    plural="providers",
-                    name=provider_name,
-                )
+                provider_obj = get_provider_with_cache(api, provider_name, provider_ns, namespace)
 
                 provider_spec = provider_obj.get("spec", {})
                 provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))

@@ -328,11 +328,15 @@ wasabi-s3-operator/
 
 ### High Priority Improvements
 
-#### 6. **Hardcoded Timeouts and Values** 🟡
+#### 6. **Hardcoded Timeouts and Values** ✅ **COMPLETED**
 - **Issue**: User readiness check uses hardcoded 60s timeout, no configuration
 - **Impact**: May fail prematurely or wait too long
-- **Location**: `src/wasabi_s3_operator/main.py:420-451`
-- **Fix Required**: Make timeouts configurable via environment variables or CRD spec
+- **Location**: `src/wasabi_s3_operator/main.py:611-638`
+- **Status**: ✅ **COMPLETED**
+- **Implementation**: 
+  - Made user readiness timeout configurable via `USER_READINESS_TIMEOUT_SECONDS` environment variable
+  - Default remains 60 seconds for backward compatibility
+  - Allows operators to adjust timeout based on their environment needs
 
 #### 7. **Resource Leaks During Access Key Rotation** ✅ **COMPLETED**
 - **Issue**: Previous access keys are tracked but deletion happens only after retention period; if operator crashes, keys leak
@@ -348,30 +352,41 @@ wasabi-s3-operator/
   - Operator crashes don't cause leaks - secrets persist in Kubernetes and are cleaned up on next reconciliation
   - No credentials stored in application memory or annotations
 
-#### 8. **No Configuration Drift Detection** 🟡
+#### 8. **No Configuration Drift Detection** ✅ **COMPLETED**
 - **Issue**: No mechanism to detect if bucket/policy configuration was changed outside operator
 - **Impact**: Operator may not detect manual changes to resources
-- **Fix Required**: 
-  - Periodic reconciliation checks
-  - Compare current state with desired state
-  - Add drift detection metrics
+- **Status**: ✅ **COMPLETED**
+- **Implementation**: 
+  - Added periodic reconciliation using `@kopf.timer` decorator (configurable via `DRIFT_CHECK_INTERVAL_SECONDS`, default 5 minutes)
+  - Enhanced drift detection for buckets (versioning, encryption, tags)
+  - Enhanced drift detection for bucket policies
+  - Added `drift_detected_total` metric to track drift occurrences by kind and resource type
+  - Drift detection metrics recorded when configuration changes are detected and corrected
 
-#### 9. **Repeated Kubernetes API Calls** 🟡
+#### 9. **Repeated Kubernetes API Calls** ✅ **COMPLETED**
 - **Issue**: Provider/user lookups happen repeatedly without caching
 - **Impact**: Increased API server load, slower reconciliation
 - **Location**: Throughout handlers
-- **Fix Required**: 
-  - Implement resource cache/informer
-  - Use Kubernetes watches instead of polling
-  - Cache provider clients with TTL
+- **Status**: ✅ **COMPLETED**
+- **Implementation**: 
+  - Created `utils/cache.py` with TTL-based caching (configurable via `K8S_CACHE_TTL_SECONDS`, default 30 seconds)
+  - Implemented `get_provider_with_cache()` and `get_user_with_cache()` helper functions
+  - Replaced all direct API calls for provider/user lookups with cached versions
+  - Added cache hit metrics to track cache effectiveness
+  - Cache automatically expires after TTL to ensure eventual consistency
 
-#### 10. **No Rate Limiting** 🟡
+#### 10. **No Rate Limiting** ✅ **COMPLETED**
 - **Issue**: No rate limiting on Kubernetes API or Wasabi API calls
 - **Impact**: Risk of API throttling, operator crashes
-- **Fix Required**: 
-  - Implement rate limiter for K8s API calls
-  - Add backoff for Wasabi API rate limits
-  - Respect rate limit headers
+- **Status**: ✅ **COMPLETED**
+- **Implementation**: 
+  - Created `utils/rate_limit.py` with rate limiting decorators
+  - Implemented `rate_limit_k8s()` decorator (configurable via `K8S_RATE_LIMIT_PER_SECOND`, default 10/sec)
+  - Implemented `rate_limit_wasabi()` decorator (configurable via `WASABI_RATE_LIMIT_PER_SECOND`, default 5/sec)
+  - Added `handle_rate_limit_error()` function to detect and handle 429/503 rate limit errors with exponential backoff
+  - Applied rate limiting to all Kubernetes API calls in cached lookup functions
+  - Added `rate_limit_hits_total` metric to track rate limit occurrences
+  - Added `api_call_total` and `api_call_duration_seconds` metrics to monitor API call patterns
 
 ### Medium Priority Improvements
 
@@ -508,6 +523,7 @@ The S3 Provider Operator is **ready for testing** with:
 - ✅ Build and deployment scripts ready
 - ✅ IAM Policy management with reusable policies
 - ✅ **All 5 critical issues fixed** (Finalizers, Configuration Reconciliation, Access Key Deletion, Policy Updates, Retry/Backoff)
+- ✅ **All 4 high priority improvements completed** (Configurable Timeouts, Drift Detection, API Caching, Rate Limiting)
 
 **✅ Critical Issues Resolved**: All 5 critical issues have been addressed:
 1. ✅ Finalizer implementation - All CRDs now have proper finalizer management
@@ -515,6 +531,12 @@ The S3 Provider Operator is **ready for testing** with:
 3. ✅ Access key deletion - Keys are properly deleted from Wasabi IAM before CRD deletion
 4. ✅ BucketPolicy update handling - Policy comparison prevents unnecessary updates
 5. ✅ Retry/backoff configuration - Exponential backoff with jitter and retry limits configured
+
+**✅ High Priority Improvements Completed**: All 4 high priority improvements have been addressed:
+1. ✅ Configurable timeouts - User readiness timeout configurable via environment variable
+2. ✅ Configuration drift detection - Periodic reconciliation with drift metrics
+3. ✅ Kubernetes API caching - TTL-based cache for provider/user lookups
+4. ✅ Rate limiting - Rate limiters for K8s and Wasabi API calls with error handling
 
 Next milestone: Integration testing with real Wasabi environments and expanding Wasabi-specific features.
 

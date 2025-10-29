@@ -30,3 +30,30 @@ provider_connectivity_total = Counter(
     ["provider", "status"],
 )
 
+# Configuration drift detection metrics
+drift_detected_total = Counter(
+    "wasabi_s3_operator_drift_detected_total",
+    "Total number of configuration drift detections",
+    ["kind", "resource_type"],
+)
+
+# API call metrics
+api_call_total = Counter(
+    "wasabi_s3_operator_api_call_total",
+    "Total number of API calls",
+    ["api_type", "operation", "result"],
+)
+
+api_call_duration_seconds = Histogram(
+    "wasabi_s3_operator_api_call_duration_seconds",
+    "Duration of API calls in seconds",
+    ["api_type", "operation"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0],
+)
+
+rate_limit_hits_total = Counter(
+    "wasabi_s3_operator_rate_limit_hits_total",
+    "Total number of rate limit hits",
+    ["api_type"],
+)
+
