@@ -37,6 +37,11 @@ from .utils.conditions import (
     set_ready_condition,
 )
 from .utils.access_keys import create_access_key_secret, update_access_key_secret
+from .utils.secrets import (
+    cleanup_expired_previous_secrets,
+    create_previous_secret,
+    read_secret_data,
+)
 from .utils.events import (
     emit_access_key_created,
     emit_access_key_rotated,
@@ -1323,6 +1328,20 @@ def handle_access_key(
             try:
                 logger.info(f"Rotating access key {existing_key_id} for user {iam_user_name}")
                 
+                # Read current secret to get old credentials
+                secret_name = f"{name}-credentials"
+                core_api = client.CoreV1Api()
+                try:
+                    old_secret_data = read_secret_data(core_api, namespace, secret_name)
+                    old_access_key_id = old_secret_data.get("access-key-id")
+                    old_secret_access_key = old_secret_data.get("secret-access-key")
+                    
+                    if not old_access_key_id or not old_secret_access_key:
+                        raise ValueError("Current secret missing access key credentials")
+                except ValueError as e:
+                    logger.error(f"Failed to read current secret: {e}")
+                    raise
+                
                 # Create new access key
                 key_response = provider_client.create_access_key(iam_user_name)
                 new_access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
@@ -1330,9 +1349,34 @@ def handle_access_key(
                 
                 logger.info(f"Created new access key {new_access_key_id}")
                 
-                # Update the secret
-                secret_name = f"{name}-credentials"
-                core_api = client.CoreV1Api()
+                # Create previous secret with old credentials
+                rotated_at = datetime.now(timezone.utc).isoformat()
+                # Use timestamp to make secret name unique (format: YYYYMMDDHHMMSS)
+                timestamp_str = rotated_at.replace("-", "").replace(":", "").replace(".", "").split("+")[0].split("T")
+                timestamp_str = "".join(timestamp_str)[:14]  # Format: YYYYMMDDHHMMSS
+                previous_secret_name = f"{name}-credentials-previous-{timestamp_str}"
+                
+                create_previous_secret(
+                    core_api,
+                    namespace,
+                    previous_secret_name,
+                    old_access_key_id,
+                    old_secret_access_key,
+                    rotated_at,
+                    name,
+                    owner_references=[
+                        {
+                            "apiVersion": "s3.cloud37.dev/v1alpha1",
+                            "kind": "AccessKey",
+                            "name": name,
+                            "uid": meta.get("uid"),
+                            "controller": True,
+                        }
+                    ],
+                )
+                logger.info(f"Created previous secret {previous_secret_name} with old credentials")
+                
+                # Update the main secret with new credentials
                 update_access_key_secret(
                     core_api,
                     namespace,
@@ -1342,37 +1386,9 @@ def handle_access_key(
                 )
                 logger.info(f"Updated secret {secret_name} with new credentials")
                 
-                # Store previous key info in annotations for tracking
-                previous_keys = annotations.get("s3.cloud37.dev/previous-keys", "[]")
-                import json
-                try:
-                    previous_keys_list = json.loads(previous_keys)
-                except Exception:
-                    previous_keys_list = []
-                
-                # Add the old key to previous keys with timestamp
-                previous_keys_list.append({
-                    "accessKeyId": existing_key_id,
-                    "rotatedAt": datetime.now(timezone.utc).isoformat(),
-                })
-                
-                # Keep only the most recent keys (limit to retention period worth)
-                max_keys_to_keep = retention_days
-                previous_keys_list = previous_keys_list[-max_keys_to_keep:]
-                
-                patch.metadata["annotations"] = {
-                    **annotations,
-                    "s3.cloud37.dev/previous-keys": json.dumps(previous_keys_list),
-                }
-                
-                # Delete the old access key immediately (not waiting for retention)
-                # Note: Actual deletion should happen after retention period
-                # For now, we'll mark it for deletion via annotations
-                logger.info(f"Old access key {existing_key_id} marked for deletion")
-                
                 # Calculate next rotation time
                 from datetime import timedelta
-                last_rotate_time = datetime.now(timezone.utc).isoformat()
+                last_rotate_time = rotated_at
                 next_rotate_time = (datetime.now(timezone.utc) + timedelta(days=rotation_interval_days)).isoformat()
                 
                 # Emit rotation event
@@ -1408,50 +1424,51 @@ def handle_access_key(
             # Access key already exists, no rotation needed
             logger.info(f"Access key {existing_key_id} already exists")
             
-            # Check if we need to cleanup expired previous keys
+            # Check if we need to cleanup expired previous secrets and access keys
             if rotation_enabled:
-                annotations_dict = annotations
-                previous_keys_str = annotations_dict.get("s3.cloud37.dev/previous-keys", "[]")
-                import json
+                core_api = client.CoreV1Api()
                 try:
-                    previous_keys_list = json.loads(previous_keys_str)
+                    # List expired previous secrets
+                    from .utils.secrets import list_previous_secrets
+                    expired_secrets = list_previous_secrets(
+                        core_api,
+                        namespace,
+                        name,
+                        include_expired=True,
+                        retention_days=retention_days,
+                    )
+                    expired_secrets = [s for s in expired_secrets if s.get("is_expired", False)]
                     
-                    # Filter out expired keys
-                    expired_keys = []
-                    valid_keys = []
-                    now = datetime.now(timezone.utc)
-                    
-                    for key_info in previous_keys_list:
-                        rotated_at_str = key_info.get("rotatedAt")
+                    # Delete expired access keys from Wasabi first (before deleting secrets)
+                    for secret_info in expired_secrets:
                         try:
-                            rotated_at = datetime.fromisoformat(rotated_at_str.replace('Z', '+00:00'))
-                            age_days = (now - rotated_at).days
+                            # Read the secret to get the access key ID
+                            secret_data = read_secret_data(core_api, namespace, secret_info["name"])
+                            expired_key_id = secret_data.get("access-key-id")
                             
-                            if age_days >= retention_days:
-                                expired_keys.append(key_info.get("accessKeyId"))
-                            else:
-                                valid_keys.append(key_info)
+                            if expired_key_id:
+                                # Delete from Wasabi
+                                try:
+                                    provider_client.delete_access_key(iam_user_name, expired_key_id)
+                                    logger.info(f"Deleted expired access key {expired_key_id} from Wasabi")
+                                except Exception as e:
+                                    logger.warning(f"Failed to delete expired access key {expired_key_id} from Wasabi: {e}")
                         except Exception as e:
-                            logger.warning(f"Failed to parse rotatedAt for key: {e}")
-                            valid_keys.append(key_info)  # Keep it if we can't parse
+                            logger.warning(f"Failed to read secret {secret_info['name']} for cleanup: {e}")
                     
-                    # Delete expired keys from Wasabi
-                    for expired_key_id in expired_keys:
-                        try:
-                            provider_client.delete_access_key(iam_user_name, expired_key_id)
-                            logger.info(f"Deleted expired access key {expired_key_id}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete expired access key {expired_key_id}: {e}")
+                    # Now cleanup expired previous secrets from Kubernetes
+                    deleted_secrets = cleanup_expired_previous_secrets(
+                        core_api,
+                        namespace,
+                        name,
+                        retention_days,
+                    )
                     
-                    # Update annotations if we removed keys
-                    if len(expired_keys) > 0:
-                        patch.metadata["annotations"] = {
-                            **annotations_dict,
-                            "s3.cloud37.dev/previous-keys": json.dumps(valid_keys),
-                        }
-                        
+                    if deleted_secrets:
+                        logger.info(f"Deleted {len(deleted_secrets)} expired previous secrets: {deleted_secrets}")
+                            
                 except Exception as e:
-                    logger.warning(f"Failed to parse previous keys: {e}")
+                    logger.warning(f"Failed to cleanup expired previous secrets: {e}")
             
             conditions = set_ready_condition(conditions, True, f"Access key {existing_key_id} is ready")
 

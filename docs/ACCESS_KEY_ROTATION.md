@@ -66,25 +66,29 @@ When the `nextRotateTime` is reached:
 
 ### Key Tracking
 
-Previous keys are tracked in the AccessKey resource's annotations as JSON:
+Previous keys are managed entirely through Kubernetes secrets. When rotation occurs:
 
-```json
-[
-  {
-    "accessKeyId": "AKIA...",
-    "rotatedAt": "2024-01-01T00:00:00+00:00"
-  }
-]
-```
+1. The old credentials are stored in a new secret named `{access-key-name}-credentials-previous-{timestamp}`
+2. The main secret `{access-key-name}-credentials` is updated with new credentials
+3. Previous secrets are labeled with:
+   - `s3.cloud37.dev/previous-secret: "true"`
+   - `s3.cloud37.dev/access-key-name: {access-key-name}`
+   - `s3.cloud37.dev/rotated-at: {iso-timestamp}`
+
+This approach ensures:
+- **No credentials stored in application memory or annotations**
+- **Kubernetes handles secret lifecycle management**
+- **Operator crashes don't cause credential leaks** (secrets persist in Kubernetes)
+- **Easy tracking and cleanup** via Kubernetes labels
 
 ### Automatic Cleanup
 
 During each reconciliation, the operator:
 
-1. Checks all previous keys for expiration
-2. Deletes keys older than `previousKeysRetentionDays` from Wasabi
-3. Removes expired keys from the tracking list
-4. Updates the resource annotations
+1. Lists all previous secrets using Kubernetes label selectors
+2. Identifies secrets older than `previousKeysRetentionDays` based on the `rotated-at` label
+3. Deletes expired access keys from Wasabi (reading the access key ID from the secret)
+4. Deletes expired previous secrets from Kubernetes
 
 ## Status Fields
 
@@ -226,11 +230,17 @@ Common reasons for rotation failure:
 
 ### Old Keys Not Being Deleted
 
-Check the retention configuration and annotations:
+Check the retention configuration and previous secrets:
 
 ```bash
+# Check retention period
 kubectl get accesskey <name> -o jsonpath='{.spec.rotate.previousKeysRetentionDays}'
-kubectl get accesskey <name> -o jsonpath='{.metadata.annotations.s3\.cloud37\.dev/previous-keys}'
+
+# List previous secrets
+kubectl get secrets -l s3.cloud37.dev/previous-secret=true,s3.cloud37.dev/access-key-name=<name>
+
+# Check rotated-at timestamps
+kubectl get secrets -l s3.cloud37.dev/previous-secret=true -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.s3\.cloud37\.dev/rotated-at}{"\n"}{end}'
 ```
 
 ## Security Considerations
@@ -240,6 +250,11 @@ kubectl get accesskey <name> -o jsonpath='{.metadata.annotations.s3\.cloud37\.de
 3. **Audit Logs**: Regularly review rotation events in your monitoring system
 4. **Rate Limits**: Be aware of Wasabi's rate limits for IAM operations
 5. **Backup Keys**: Never disable rotation entirely for production workloads
+6. **No Credential Leaks**: The operator uses Kubernetes secrets for rotation state management, ensuring:
+   - Credentials are never stored in application memory or annotations
+   - Operator crashes don't cause credential leaks (secrets persist in Kubernetes)
+   - Kubernetes handles secret lifecycle management securely
+   - Previous secrets are automatically cleaned up after retention period
 
 ## Limitations
 

@@ -334,13 +334,19 @@ wasabi-s3-operator/
 - **Location**: `src/wasabi_s3_operator/main.py:420-451`
 - **Fix Required**: Make timeouts configurable via environment variables or CRD spec
 
-#### 7. **Resource Leaks During Access Key Rotation** 🟡
+#### 7. **Resource Leaks During Access Key Rotation** ✅ **COMPLETED**
 - **Issue**: Previous access keys are tracked but deletion happens only after retention period; if operator crashes, keys leak
 - **Impact**: Access key buildup, potential security issues
-- **Location**: `src/wasabi_s3_operator/main.py:1275-1318`
-- **Fix Required**: 
-  - Immediate cleanup of old keys after new key is confirmed working
-  - Store rotation state more reliably (in status, not just annotations)
+- **Location**: `src/wasabi_s3_operator/main.py:1326-1422`
+- **Status**: ✅ **COMPLETED**
+- **Implementation**: 
+  - Rotation now uses Kubernetes secrets for state management instead of annotations
+  - When rotation occurs, old credentials are stored in `{name}-credentials-previous-{timestamp}` secret
+  - Main secret is updated with new credentials atomically
+  - Previous secrets are labeled with rotation metadata (`s3.cloud37.dev/previous-secret`, `s3.cloud37.dev/rotated-at`)
+  - Cleanup reads from Kubernetes secrets, not application memory
+  - Operator crashes don't cause leaks - secrets persist in Kubernetes and are cleaned up on next reconciliation
+  - No credentials stored in application memory or annotations
 
 #### 8. **No Configuration Drift Detection** 🟡
 - **Issue**: No mechanism to detect if bucket/policy configuration was changed outside operator
