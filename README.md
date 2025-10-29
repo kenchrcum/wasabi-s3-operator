@@ -19,10 +19,12 @@ The Wasabi S3 Operator brings declarative S3 bucket management directly into you
 
 ### Key Features
 
-✨ **Four Declarative CRDs**
-- `Provider` — Define S3 provider connections
-- `Bucket` — Manage S3 buckets with versioning, encryption, lifecycle rules
+✨ **Six Declarative CRDs**
+- `Provider` — Define Wasabi S3 provider connections
+- `Bucket` — Manage S3 buckets with versioning, encryption, lifecycle rules, CORS
 - `BucketPolicy` — Apply IAM-style bucket policies
+- `User` — Manage IAM users with inline or referenced policies
+- `IAMPolicy` — Reusable IAM policies for multiple users
 - `AccessKey` — Manage access keys with automatic rotation
 
 🔐 **Security First**
@@ -126,17 +128,20 @@ spec:
 
 ## 📚 Custom Resource Definitions
 
+The operator manages six CRDs for complete Wasabi S3 infrastructure management:
+
 ### Provider
 
-Represents an S3-compatible storage provider connection.
+Represents a Wasabi S3 provider connection.
 
 **Key Fields:**
 - `spec.type` (required) — Provider type: `wasabi`
-- `spec.endpoint` (required) — Provider API endpoint URL
+- `spec.endpoint` (required) — Wasabi S3 API endpoint URL (e.g., `https://s3.wasabisys.com`)
+- `spec.iamEndpoint` (optional) — Wasabi IAM endpoint URL (required for user management, e.g., `https://iam.wasabisys.com`)
 - `spec.region` (required) — Provider region
-- `spec.auth` (required) — Authentication configuration
+- `spec.auth` (required) — Authentication configuration via Kubernetes Secrets
 - `spec.tls` (optional) — TLS configuration
-- `spec.pathStyle` (default: `true`) — Use path-style addressing
+- `spec.pathStyle` (default: `true`) — Use path-style addressing (required for Wasabi)
 
 **Status Conditions:**
 - `AuthValid` — Credentials validation status
@@ -155,6 +160,7 @@ Represents an S3 bucket managed by the operator.
 - `spec.publicAccess` — Public access block settings
 - `spec.lifecycle` — Lifecycle rules for object management
 - `spec.cors` — CORS configuration
+- `spec.autoManage` — Automatic user, policy, and access key creation
 
 **Status Conditions:**
 - `Ready` — Bucket is ready and synchronized
@@ -174,18 +180,49 @@ Represents an IAM-style bucket policy document.
 - `BucketNotReady` — Referenced Bucket is not ready
 - `PolicyInvalid` — Policy document validation failed
 
+### User
+
+Represents an IAM user for Wasabi S3 access.
+
+**Key Fields:**
+- `spec.providerRef.name` (required) — Reference to Provider (must have `iamEndpoint` configured)
+- `spec.name` (required) — IAM user name
+- `spec.policy` (optional) — Inline IAM policy document
+- `spec.policyRef` (optional) — Reference to IAMPolicy resource (mutually exclusive with `policy`)
+- `spec.tags` (optional) — User tags
+
+**Status Conditions:**
+- `Ready` — User is ready and synchronized
+- `ProviderNotReady` — Referenced Provider is not ready
+- `CreationFailed` — User creation failed
+
+### IAMPolicy
+
+Represents a reusable IAM policy that can be attached to multiple users.
+
+**Key Fields:**
+- `spec.providerRef.name` (required) — Reference to Provider
+- `spec.policy` (required) — IAM policy document (JSON)
+
+**Status Conditions:**
+- `Ready` — Policy is ready to be attached
+- `ProviderNotReady` — Referenced Provider is not ready
+- `CreationFailed` — Policy creation failed
+
 ### AccessKey
 
 Represents an access key pair for S3 authentication.
 
 **Key Fields:**
 - `spec.providerRef.name` (required) — Reference to Provider
-- `spec.displayName` — Human-readable identifier
+- `spec.userRef.name` (required) — Reference to User resource
+- `spec.displayName` (optional) — Human-readable identifier
 - `spec.rotate` — Automatic rotation configuration
 
 **Status Conditions:**
 - `Ready` — Access key is ready and synchronized
 - `ProviderNotReady` — Referenced Provider is not ready
+- `UserNotReady` — Referenced User is not ready
 - `CreationFailed` — Access key creation failed
 - `RotationFailed` — Access key rotation failed
 
@@ -320,16 +357,17 @@ pre-commit run --all-files
 
 ## 📖 Documentation
 
-### Core Documentation
-- [Development Status](./architecture/STATUS.md) - Current development status and next steps
-- [Development Plan](./architecture/development-plan.md) - Comprehensive architectural documentation
+### Architecture Documentation
+- [Development Status](./architecture/STATUS.md) - Current development status and roadmap
+- [Development Plan](./architecture/development-plan.md) - Original architectural plan (historical reference)
 - [CRD Specifications](./architecture/crd-specifications.md) - Detailed CRD schemas and specifications
 
-### Best Practices
-- [Python Guidelines](.cursor/rules/python-guidelines.mdc) - Python coding standards
-- [Operator Patterns](.cursor/rules/operator-patterns.mdc) - Kubernetes operator patterns
-- [Security Practices](.cursor/rules/security-practices.mdc) - Security guidelines
-- [Testing Strategy](.cursor/rules/testing-strategy.mdc) - Testing approach
+### Additional Documentation
+- [Access Key Rotation](./docs/ACCESS_KEY_ROTATION.md) - Automatic key rotation guide
+- [IAM Policy Management](./docs/IAM_POLICY.md) - Reusable IAM policies
+- [Code Organization](./docs/CODE_ORGANIZATION.md) - Code structure and organization
+- [Versioning Strategy](./docs/VERSIONING_STRATEGY.md) - CRD versioning approach
+- [Grafana Dashboard](./docs/grafana-dashboard-readme.md) - Monitoring dashboard setup
 
 ## 🤝 Contributing
 

@@ -130,4 +130,6 @@ helm uninstall wasabi-s3-operator --namespace wasabi-s3-operator-system
 - Read the [Deployment Guide](./DEPLOYMENT.md) for detailed instructions
 - Check [Development Status](./architecture/STATUS.md) for current progress
 - Explore [CRD Specifications](./architecture/crd-specifications.md)
+- See [Examples](./examples/) for more use cases
+- Review [Documentation Index](./docs/README.md) for all available docs
 

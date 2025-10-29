@@ -267,5 +267,5 @@ kubectl proxy
 - Read the [Development Status](./architecture/STATUS.md)
 - Explore [CRD Specifications](./architecture/crd-specifications.md)
 - Check [Examples](./examples/) for more use cases
-- Review [Development Plan](./architecture/development-plan.md)
+- Review [Documentation Index](./docs/README.md) for all available documentation
 

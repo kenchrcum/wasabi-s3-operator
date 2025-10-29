@@ -61,8 +61,9 @@ properties:
     properties:
       type:
         type: string
-        enum: [wasabi, aws, minio, custom]
-        description: S3 provider type
+        enum: [wasabi]
+        default: wasabi
+        description: Wasabi S3 provider type (Wasabi-only operator)
         
       endpoint:
         type: string

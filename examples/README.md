@@ -1,6 +1,6 @@
-# S3 Operator Examples
+# Wasabi S3 Operator Examples
 
-This directory contains example manifests for using the S3 Provider Operator.
+This directory contains example manifests for using the Wasabi S3 Operator. All examples are tested and validated for use with Wasabi's S3-compatible API.
 
 ## Quick Start Examples
 
@@ -36,56 +36,35 @@ Create a bucket without auto-management:
 kubectl apply -f bucket-basic.yaml
 ```
 
-### Provider Examples
+## Individual Resource Examples
 
+### Provider
 - `provider-wasabi.yaml` - Wasabi provider with IAM endpoint
 
-### Access Key Examples
+### Bucket
+- `bucket-basic.yaml` - Basic bucket without auto-management
+- `bucket-auto-managed.yaml` - Bucket with automatic user/policy/key creation
+- `bucket-with-lifecycle.yaml` - Bucket with lifecycle rules and CORS
+- `bucket-with-deletion.yaml` - Bucket with deletion protection
 
-- `accesskey-with-rotation.yaml` - Access key with automatic rotation
-
-### Bucket Policy Examples
-
+### Bucket Policy
 - `bucket-policy-public-read.yaml` - Public read access policy
 
-### Lifecycle Rules
+### User
+- `user-basic.yaml` - Basic IAM user
+- `user-with-iampolicy.yaml` - User with IAMPolicy reference
 
-- `bucket-with-lifecycle.yaml` - Bucket with lifecycle rules and CORS
+### IAM Policy
+- `iampolicy-basic.yaml` - Reusable IAM policy
 
-## Complete Workflows
+### Access Key
+- `accesskey-with-rotation.yaml` - Access key with automatic rotation
 
-### User-Based Workflow
+### Complete Workflows
+- `workflow-with-user.yaml` - Complete workflow with explicit user management
+- `workflow-with-iampolicy.yaml` - Complete workflow using IAMPolicy
 
-For advanced use cases with explicit user management:
-
-```bash
-kubectl apply -f workflow-with-user.yaml
-```
-
-See [USER_WORKFLOW.md](./USER_WORKFLOW.md) for step-by-step guide.
-
-### Creating a Single Bucket
-
-**Simplest approach** - Just create a bucket:
-
-```yaml
-apiVersion: s3.cloud37.dev/v1alpha1
-kind: Bucket
-metadata:
-  name: my-storage
-spec:
-  providerRef:
-    name: wasabi-us-east-1
-  name: my-storage
-  autoManage:
-    enabled: true
-    accessLevel: readwrite
-```
-
-Everything else happens automatically!
-
-## Documentation
-
+See workflow documentation:
 - [Simple Workflow](./SIMPLE_WORKFLOW.md) - Auto-managed bucket workflow
 - [User Workflow](./USER_WORKFLOW.md) - Manual user management workflow
 

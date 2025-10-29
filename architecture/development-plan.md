@@ -1,10 +1,12 @@
 # S3 Provider Operator Development Plan (v1alpha1)
 
-This document defines a step-by-step plan to build a Kubernetes Operator for managing S3-compatible storage providers (Wasabi, AWS S3, MinIO, etc.) using the Kopf framework in Python. The operator will provide declarative management of buckets, bucket policies, and access keys across multiple S3 providers.
+This document defines the original architectural plan for building a Kubernetes Operator for managing Wasabi S3 storage using the Kopf framework in Python. The operator provides declarative management of buckets, bucket policies, access keys, IAM users, and IAM policies specifically optimized for Wasabi's S3-compatible API.
+
+**Note**: This document is maintained as historical reference. The operator has been completed as a Wasabi-focused implementation.
 
 - API Group: `s3.cloud37.dev`
 - Initial Version: `v1alpha1` (evolve to `v1beta1`/`v1` with conversion)
-- Scope: Provider, Bucket, BucketPolicy, AccessKey CRDs with provider-agnostic abstraction
+- Scope: Provider, Bucket, BucketPolicy, AccessKey, User, IAMPolicy CRDs optimized for Wasabi
 - Non-goals (for v1alpha1): complex replication, cross-region failover, advanced analytics
 
 ## Phase 1: Project Setup and Design
@@ -29,7 +31,7 @@ All references are namespaced unless explicitly noted. Fields listed with defaul
 Represents an S3-compatible storage provider and its authentication configuration.
 
 Spec:
-- `type` (enum, required): `wasabi`, `aws`, `minio`, `custom`
+- `type` (enum, required): `wasabi` (Wasabi-only operator)
 - `endpoint` (string, required): Provider API endpoint URL
 - `region` (string, required): Provider region (e.g., `us-east-1`, `us-west-1`)
 - `auth` (object, required):
@@ -153,12 +155,11 @@ Status:
 - Idempotent handlers only
 - Configure controller limits: bounded worker pool, rate-limited requeues, leader election
 
-#### 3.2 Provider Abstraction Layer
-Create a provider abstraction that supports multiple S3 providers:
-- Common interface for all S3 operations
-- Provider-specific implementations for Wasabi, AWS, MinIO, etc.
-- Use `boto3` for AWS-compatible providers (Wasabi supports AWS SDK)
-- Use `minio` Python SDK for MinIO-specific features
+#### 3.2 Provider Implementation
+Wasabi-focused provider implementation:
+- Optimized for Wasabi's S3-compatible API
+- Uses `boto3` for AWS-compatible operations (Wasabi supports AWS SDK)
+- IAM endpoint support for user and access key management
 
 Operations:
 - Bucket CRUD: create, read, update, delete
@@ -313,28 +314,21 @@ Conditions for all CRDs:
 - Concurrent policy updates
 - Access key rotation during active use
 
-## Phase 5: Provider-Specific Features
+## Phase 5: Wasabi-Specific Features
 
-### 8. Provider Implementations
+### 8. Wasabi Implementation
 
-#### 8.1 Wasabi
+#### 8.1 Wasabi S3 API
 - Full support for Wasabi S3 API
 - Region handling
-- Special configuration notes
+- IAM endpoint integration for user management
+- Path-style addressing support (required for Wasabi)
 
-#### 8.2 AWS S3
-- Full support for AWS S3
-- IAM integration for advanced policies
-- CloudTrail integration
-
-#### 8.3 MinIO
-- Full support for MinIO
-- User management integration
-- Bucket replication
-
-#### 8.4 Generic S3
-- Support for any S3-compatible provider
-- Configurable endpoint and authentication
+#### 8.2 Wasabi IAM
+- IAM user management
+- Access key rotation
+- IAM policy management
+- Bucket policy application
 
 ## Rollout and Compatibility
 
@@ -342,16 +336,17 @@ Conditions for all CRDs:
 - Helm CRDs in `crds/` for robust install/upgrade
 - Backward compatibility: provide conversion docs
 
-## MVP Scope (First Release)
+## MVP Scope (v1alpha1 - Completed)
 
-1. CRDs with validation, defaults, status/conditions
-2. Provider abstraction layer with Wasabi and AWS support
-3. Bucket CRUD operations with versioning and encryption
-4. BucketPolicy management
-5. AccessKey creation and rotation
-6. Helm chart with RBAC presets
-7. Observability: Events, metrics, structured logs
-8. Tests: unit + integration with LocalStack
+1. ✅ CRDs with validation, defaults, status/conditions (Provider, Bucket, BucketPolicy, AccessKey, User, IAMPolicy)
+2. ✅ Wasabi-optimized provider implementation
+3. ✅ Bucket CRUD operations with versioning, encryption, lifecycle, CORS
+4. ✅ BucketPolicy management
+5. ✅ AccessKey creation and rotation
+6. ✅ User and IAMPolicy management
+7. ✅ Helm chart with RBAC presets
+8. ✅ Observability: Events, metrics, structured logs, tracing
+9. ✅ Tests: unit tests with 35%+ coverage
 
 Note: This plan intentionally avoids writing code and focuses on architecture to guide implementation.
 
