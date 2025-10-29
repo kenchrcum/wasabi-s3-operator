@@ -391,14 +391,21 @@ class AWSProvider:
         logger.debug(f"Converted policy from CRD format to AWS format: {aws_policy}")
         return aws_policy
 
-    def get_bucket_policy(self, name: str) -> dict[str, Any]:
-        """Get bucket policy."""
+    def get_bucket_policy(self, name: str) -> dict[str, Any] | None:
+        """Get bucket policy.
+        
+        Returns:
+            Policy document dict if policy exists, None if no policy is set
+        """
         try:
             response = self.client.get_bucket_policy(Bucket=name)
             import json
 
             return json.loads(response["Policy"])
         except ClientError as e:
+            # No policy configured - return None
+            if e.response.get("Error", {}).get("Code") == "NoSuchBucketPolicy":
+                return None
             logger.error(f"Failed to get policy for bucket {name}: {e}")
             raise
 
@@ -408,6 +415,21 @@ class AWSProvider:
             self.client.delete_bucket_policy(Bucket=name)
         except ClientError as e:
             logger.error(f"Failed to delete policy for bucket {name}: {e}")
+            raise
+
+    def get_bucket_tags(self, name: str) -> dict[str, str]:
+        """Get bucket tags."""
+        try:
+            response = self.client.get_bucket_tagging(Bucket=name)
+            tags = {}
+            for tag in response.get("TagSet", []):
+                tags[tag["Key"]] = tag["Value"]
+            return tags
+        except ClientError as e:
+            # Tags not configured - return empty dict
+            if e.response["Error"]["Code"] == "NoSuchTagSet":
+                return {}
+            logger.error(f"Failed to get tags for bucket {name}: {e}")
             raise
 
     def set_bucket_tags(self, name: str, tags: dict[str, str]) -> None:

@@ -16,6 +16,7 @@ from .builders.bucket import create_bucket_config_from_spec
 from .builders.provider import create_provider_from_spec
 from .constants import (
     API_GROUP_VERSION,
+    FINALIZER,
     KIND_ACCESS_KEY,
     KIND_BUCKET,
     KIND_BUCKET_POLICY,
@@ -51,6 +52,22 @@ from .utils.events import (
 )
 
 
+def ensure_finalizer(meta: dict[str, Any], patch: kopf.Patch) -> None:
+    """Ensure finalizer is present in metadata."""
+    finalizers = meta.get("finalizers", [])
+    if FINALIZER not in finalizers:
+        finalizers.append(FINALIZER)
+        patch.metadata["finalizers"] = finalizers
+
+
+def remove_finalizer(meta: dict[str, Any], patch: kopf.Patch) -> None:
+    """Remove finalizer from metadata."""
+    finalizers = meta.get("finalizers", [])
+    if FINALIZER in finalizers:
+        finalizers.remove(FINALIZER)
+        patch.metadata["finalizers"] = finalizers if finalizers else None
+
+
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     """Configure the operator."""
@@ -65,6 +82,14 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     settings.posting.level = 0
     settings.networking.request_timeout = 30.0
     settings.execution.max_workers = 4
+
+    # Configure retry/backoff settings
+    # Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s (max)
+    settings.execution.min_retry_delay = 1.0
+    settings.execution.max_retry_delay = 60.0
+    settings.execution.retry_backoff = 2.0  # Exponential multiplier
+    settings.execution.max_retries = 5  # Maximum retry attempts
+    settings.execution.backoff_jitter = 0.1  # 10% jitter to prevent thundering herd
 
     # Start metrics HTTP server on port 8080
     metrics_port = int(os.getenv("METRICS_PORT", "8080"))
@@ -90,6 +115,9 @@ def handle_provider(
     uid = meta.get("uid", "unknown")
 
     emit_reconcile_started(meta)
+
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
 
     # Track reconciliation
     metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="started").inc()
@@ -174,6 +202,7 @@ def handle_provider(
 def handle_provider_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle Provider resource deletion."""
@@ -184,6 +213,9 @@ def handle_provider_delete(
 
     logger.info(f"Provider {name} is being deleted")
     # No cleanup needed for provider itself
+    
+    # Remove finalizer to allow deletion
+    remove_finalizer(meta, patch)
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_BUCKET)
@@ -204,6 +236,10 @@ def handle_bucket(
     name = meta.get("name", "unknown")
 
     emit_reconcile_started(meta)
+    
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
+    
     metrics.reconcile_total.labels(kind=KIND_BUCKET, result="started").inc()
 
     # Track duration
@@ -315,9 +351,60 @@ def handle_bucket(
                     "observedGeneration": meta.get("generation", 0),
                 })
         else:
-            emit_bucket_updated(meta, bucket_name)
-            logger.info(f"Bucket {bucket_name} already exists")
-            metrics.bucket_operations_total.labels(operation="exists", result="success").inc()
+            # Bucket exists - reconcile configuration changes
+            logger.info(f"Bucket {bucket_name} already exists, checking for configuration drift")
+            
+            try:
+                # Check versioning configuration
+                current_versioning = provider_client.get_bucket_versioning(bucket_name)
+                desired_versioning_enabled = bucket_config.get("versioning_enabled", False)
+                desired_mfa_delete = bucket_config.get("mfa_delete", False)
+                
+                if current_versioning.get("enabled") != desired_versioning_enabled or \
+                   current_versioning.get("mfa_delete") != desired_mfa_delete:
+                    logger.info(f"Updating versioning configuration for bucket {bucket_name}")
+                    provider_client.set_bucket_versioning(bucket_name, desired_versioning_enabled, desired_mfa_delete)
+                    metrics.bucket_operations_total.labels(operation="update_versioning", result="success").inc()
+                
+                # Check encryption configuration
+                current_encryption = provider_client.get_bucket_encryption(bucket_name)
+                desired_encryption_enabled = bucket_config.get("encryption_enabled", False)
+                desired_algorithm = bucket_config.get("encryption_algorithm", "AES256")
+                desired_kms_key_id = bucket_config.get("kms_key_id")
+                
+                current_algorithm = current_encryption.get("algorithm")
+                current_kms_key_id = current_encryption.get("kms_key_id")
+                
+                if desired_encryption_enabled:
+                    if current_algorithm != desired_algorithm or current_kms_key_id != desired_kms_key_id:
+                        logger.info(f"Updating encryption configuration for bucket {bucket_name}")
+                        try:
+                            provider_client.set_bucket_encryption(bucket_name, desired_algorithm, desired_kms_key_id)
+                            metrics.bucket_operations_total.labels(operation="update_encryption", result="success").inc()
+                        except Exception as e:
+                            logger.warning(f"Failed to update encryption for bucket {bucket_name}: {e}")
+                            metrics.bucket_operations_total.labels(operation="update_encryption", result="failed").inc()
+                elif current_algorithm is not None:
+                    # Encryption should be disabled but is currently enabled
+                    # Note: AWS doesn't support disabling encryption, but we log it
+                    logger.info(f"Encryption is enabled on bucket {bucket_name} but desired state is disabled")
+                
+                # Check tags configuration
+                desired_tags = bucket_config.get("tags") or {}
+                if desired_tags:
+                    current_tags = provider_client.get_bucket_tags(bucket_name)
+                    if current_tags != desired_tags:
+                        logger.info(f"Updating tags for bucket {bucket_name}")
+                        provider_client.set_bucket_tags(bucket_name, desired_tags)
+                        metrics.bucket_operations_total.labels(operation="update_tags", result="success").inc()
+                
+                emit_bucket_updated(meta, bucket_name)
+                logger.info(f"Bucket {bucket_name} configuration reconciled")
+                metrics.bucket_operations_total.labels(operation="reconcile", result="success").inc()
+            except Exception as e:
+                logger.warning(f"Failed to reconcile bucket configuration for {bucket_name}: {e}")
+                # Don't fail reconciliation, just log the warning
+                metrics.bucket_operations_total.labels(operation="reconcile", result="failed").inc()
 
         # Handle auto-management if enabled
         auto_manage = spec.get("autoManage", {})
@@ -603,6 +690,7 @@ def handle_bucket(
 def handle_bucket_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle Bucket resource deletion."""
@@ -665,6 +753,9 @@ def handle_bucket_delete(
         except Exception as e:
             logger.error(f"Failed to delete bucket {bucket_name}: {e}")
             # Don't fail deletion if cleanup fails
+        finally:
+            # Remove finalizer to allow deletion
+            remove_finalizer(meta, patch)
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_BUCKET_POLICY)
@@ -688,6 +779,10 @@ def handle_bucket_policy(
     logger.info(f"BucketPolicy spec: {spec}")
 
     emit_reconcile_started(meta)
+    
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
+    
     metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="started").inc()
 
     # Track duration
@@ -821,11 +916,44 @@ def handle_bucket_policy(
                     "conditions": conditions,
                     "observedGeneration": meta.get("generation", 0),
                 })
+                return
 
-            # Apply policy
-            provider_client.set_bucket_policy(bucket_name, policy)
-            emit_policy_applied(meta, bucket_name)
-            logger.info(f"Applied policy to bucket {bucket_name}")
+            # Check if policy has changed by comparing with current policy
+            policy_changed = True
+            try:
+                current_policy = provider_client.get_bucket_policy(bucket_name)
+                if current_policy is not None:
+                    # Convert current policy to CRD format for comparison
+                    from .services.aws.client import AWSProvider
+                    if isinstance(provider_client, AWSProvider):
+                        # Normalize both policies for comparison
+                        import json
+                        current_policy_normalized = json.dumps(current_policy, sort_keys=True)
+                        desired_policy_normalized = json.dumps(
+                            provider_client._convert_policy_to_aws_format(policy),
+                            sort_keys=True
+                        )
+                        policy_changed = current_policy_normalized != desired_policy_normalized
+                        
+                        if not policy_changed:
+                            logger.info(f"Policy for bucket {bucket_name} unchanged, skipping update")
+                else:
+                    # No policy exists, needs to be set
+                    logger.info(f"No existing policy for bucket {bucket_name}, will create new policy")
+                    policy_changed = True
+            except Exception as e:
+                # If we can't get current policy, assume it needs to be set
+                # This handles unexpected errors
+                logger.debug(f"Could not get current policy for comparison: {e}")
+                policy_changed = True
+
+            # Apply policy only if it changed
+            if policy_changed:
+                provider_client.set_bucket_policy(bucket_name, policy)
+                emit_policy_applied(meta, bucket_name)
+                logger.info(f"Applied policy to bucket {bucket_name}")
+            else:
+                logger.info(f"Policy for bucket {bucket_name} is already up to date")
 
             # Set ready condition
             conditions = set_ready_condition(conditions, True, f"Policy applied to bucket {bucket_name}")
@@ -867,6 +995,7 @@ def handle_bucket_policy(
 def handle_bucket_policy_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle BucketPolicy resource deletion."""
@@ -925,6 +1054,9 @@ def handle_bucket_policy_delete(
         except Exception as e:
             logger.error(f"Failed to delete policy from bucket {bucket_name}: {e}")
             # Don't fail deletion if cleanup fails
+        finally:
+            # Remove finalizer to allow deletion
+            remove_finalizer(meta, patch)
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_ACCESS_KEY)
@@ -945,6 +1077,10 @@ def handle_access_key(
     name = meta.get("name", "unknown")
 
     emit_reconcile_started(meta)
+    
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
+    
     metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="started").inc()
 
     # Track duration
@@ -1350,6 +1486,8 @@ def handle_access_key(
 def handle_access_key_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    status: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle AccessKey resource deletion."""
@@ -1357,11 +1495,86 @@ def handle_access_key_delete(
 
     logger = logging.getLogger(__name__)
     name = meta.get("name", "unknown")
+    namespace = meta.get("namespace", "default")
 
     logger.info(f"AccessKey {name} is being deleted")
 
+    # Get access key ID from status
+    access_key_id = status.get("accessKeyId")
+    
+    if access_key_id:
+        try:
+            # Get provider
+            provider_ref = spec.get("providerRef", {})
+            provider_name = provider_ref.get("name")
+            
+            if provider_name:
+                from kubernetes import client, config
+                
+                try:
+                    config.load_incluster_config()
+                except config.ConfigException:
+                    config.load_kube_config()
+                
+                api = client.CustomObjectsApi()
+                provider_ns = provider_ref.get("namespace", namespace)
+                
+                try:
+                    provider_obj = api.get_namespaced_custom_object(
+                        group="s3.cloud37.dev",
+                        version="v1alpha1",
+                        namespace=provider_ns,
+                        plural="providers",
+                        name=provider_name,
+                    )
+                    
+                    provider_spec = provider_obj.get("spec", {})
+                    provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
+                    
+                    # Get user name from userRef
+                    user_ref = spec.get("userRef", {})
+                    user_name = user_ref.get("name")
+                    
+                    if user_name:
+                        # Get the actual IAM user name from the User CRD
+                        user_ns = user_ref.get("namespace", namespace)
+                        try:
+                            user_obj = api.get_namespaced_custom_object(
+                                group="s3.cloud37.dev",
+                                version="v1alpha1",
+                                namespace=user_ns,
+                                plural="users",
+                                name=user_name,
+                            )
+                            user_spec = user_obj.get("spec", {})
+                            iam_user_name = user_spec.get("name")
+                            
+                            if iam_user_name:
+                                # Delete access key from Wasabi IAM
+                                provider_client.delete_access_key(iam_user_name, access_key_id)
+                                logger.info(f"Deleted access key {access_key_id} for user {iam_user_name}")
+                            else:
+                                logger.warning(f"User {user_name} does not have IAM user name in spec")
+                        except client.exceptions.ApiException as e:
+                            if e.status == 404:
+                                logger.warning(f"User {user_name} not found, cannot delete access key")
+                            else:
+                                raise
+                    else:
+                        logger.warning(f"AccessKey {name} does not have userRef, cannot delete access key")
+                except client.exceptions.ApiException as e:
+                    if e.status == 404:
+                        logger.warning(f"Provider {provider_name} not found, cannot delete access key")
+                    else:
+                        raise
+        except Exception as e:
+            logger.error(f"Failed to delete access key {access_key_id}: {e}")
+            # Don't fail deletion if cleanup fails - we'll still remove the finalizer
+    
     # Secret will be deleted via owner reference
-    # In a real implementation, we would also revoke the key from the provider
+    
+    # Remove finalizer to allow deletion
+    remove_finalizer(meta, patch)
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_USER)
@@ -1382,6 +1595,10 @@ def handle_user(
     name = meta.get("name", "unknown")
 
     emit_reconcile_started(meta)
+    
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
+    
     metrics.reconcile_total.labels(kind=KIND_USER, result="started").inc()
 
     # Track duration
@@ -1647,6 +1864,7 @@ def handle_user(
 def handle_user_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle User resource deletion."""
@@ -1693,6 +1911,9 @@ def handle_user_delete(
         except Exception as e:
             logger.error(f"Failed to delete user {user_name}: {e}")
             # Don't fail deletion if cleanup fails
+        finally:
+            # Remove finalizer to allow deletion
+            remove_finalizer(meta, patch)
 
 
 @kopf.on.create(API_GROUP_VERSION, KIND_IAM_POLICY)
@@ -1713,6 +1934,10 @@ def handle_iampolicy(
     name = meta.get("name", "unknown")
 
     emit_reconcile_started(meta)
+    
+    # Ensure finalizer is present
+    ensure_finalizer(meta, patch)
+    
     metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="started").inc()
 
     # Track duration
@@ -1873,6 +2098,7 @@ def handle_iampolicy(
 def handle_iampolicy_delete(
     spec: dict[str, Any],
     meta: dict[str, Any],
+    patch: kopf.Patch,
     **kwargs: Any,
 ) -> None:
     """Handle IAMPolicy resource deletion."""
@@ -1921,4 +2147,7 @@ def handle_iampolicy_delete(
     except Exception as e:
         logger.error(f"Failed to delete IAMPolicy {name}: {e}")
         # Don't fail deletion if cleanup fails
+    finally:
+        # Remove finalizer to allow deletion
+        remove_finalizer(meta, patch)
 
