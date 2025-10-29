@@ -526,6 +526,123 @@ def handle_bucket(
                         provider_client.set_bucket_tags(bucket_name, desired_tags)
                         metrics.bucket_operations_total.labels(operation="update_tags", result="success").inc()
                 
+                # Check lifecycle configuration
+                desired_lifecycle_rules = bucket_config.get("lifecycle_rules", [])
+                if desired_lifecycle_rules:
+                    try:
+                        current_lifecycle = provider_client.get_bucket_lifecycle(bucket_name)
+                        lifecycle_changed = False
+                        
+                        # Normalize for comparison
+                        import json
+                        desired_lifecycle_normalized = json.dumps(sorted(desired_lifecycle_rules, key=lambda x: x.get("id", "")))
+                        
+                        if current_lifecycle is None:
+                            lifecycle_changed = True
+                        else:
+                            # Convert current AWS format to CRD format for comparison
+                            current_rules = current_lifecycle.get("Rules", [])
+                            current_crd_format = []
+                            for rule in current_rules:
+                                crd_rule: dict[str, Any] = {
+                                    "id": rule.get("ID"),
+                                    "status": rule.get("Status", "Enabled"),
+                                }
+                                if "Filter" in rule and "Prefix" in rule["Filter"]:
+                                    crd_rule["prefix"] = rule["Filter"]["Prefix"]
+                                if "Expiration" in rule:
+                                    exp = rule["Expiration"]
+                                    if "Days" in exp:
+                                        crd_rule["expiration"] = {"days": exp["Days"]}
+                                    elif "Date" in exp:
+                                        crd_rule["expiration"] = {"date": exp["Date"]}
+                                if "Transitions" in rule:
+                                    crd_rule["transitions"] = [
+                                        {"days": t["Days"], "storageClass": t["StorageClass"]}
+                                        for t in rule["Transitions"]
+                                    ]
+                                current_crd_format.append(crd_rule)
+                            
+                            current_lifecycle_normalized = json.dumps(sorted(current_crd_format, key=lambda x: x.get("id", "")))
+                            lifecycle_changed = desired_lifecycle_normalized != current_lifecycle_normalized
+                        
+                        if lifecycle_changed:
+                            drift_detected = True
+                            logger.info(f"Drift detected: lifecycle configuration for bucket {bucket_name}")
+                            metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="lifecycle").inc()
+                            provider_client.set_bucket_lifecycle(bucket_name, desired_lifecycle_rules)
+                            metrics.bucket_operations_total.labels(operation="update_lifecycle", result="success").inc()
+                    except Exception as e:
+                        logger.warning(f"Failed to reconcile lifecycle configuration for bucket {bucket_name}: {e}")
+                        metrics.bucket_operations_total.labels(operation="update_lifecycle", result="failed").inc()
+                elif bucket_config.get("lifecycle_rules") == []:
+                    # Explicitly empty lifecycle rules - delete if exists
+                    try:
+                        current_lifecycle = provider_client.get_bucket_lifecycle(bucket_name)
+                        if current_lifecycle is not None:
+                            drift_detected = True
+                            logger.info(f"Drift detected: lifecycle should be removed for bucket {bucket_name}")
+                            metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="lifecycle").inc()
+                            provider_client.delete_bucket_lifecycle(bucket_name)
+                            metrics.bucket_operations_total.labels(operation="delete_lifecycle", result="success").inc()
+                    except Exception as e:
+                        logger.warning(f"Failed to delete lifecycle configuration for bucket {bucket_name}: {e}")
+                
+                # Check CORS configuration
+                desired_cors_rules = bucket_config.get("cors_rules", [])
+                if desired_cors_rules:
+                    try:
+                        current_cors = provider_client.get_bucket_cors(bucket_name)
+                        cors_changed = False
+                        
+                        # Normalize for comparison
+                        import json
+                        desired_cors_normalized = json.dumps(sorted(desired_cors_rules, key=lambda x: json.dumps(x.get("allowedOrigins", []))))
+                        
+                        if current_cors is None:
+                            cors_changed = True
+                        else:
+                            # Convert current AWS format to CRD format for comparison
+                            current_rules = current_cors.get("CORSRules", [])
+                            current_crd_format = []
+                            for rule in current_rules:
+                                crd_rule: dict[str, Any] = {
+                                    "allowedOrigins": rule.get("AllowedOrigins", []),
+                                    "allowedMethods": rule.get("AllowedMethods", []),
+                                }
+                                if "AllowedHeaders" in rule:
+                                    crd_rule["allowedHeaders"] = rule["AllowedHeaders"]
+                                if "ExposedHeaders" in rule:
+                                    crd_rule["exposedHeaders"] = rule["ExposedHeaders"]
+                                if "MaxAgeSeconds" in rule:
+                                    crd_rule["maxAgeSeconds"] = rule["MaxAgeSeconds"]
+                                current_crd_format.append(crd_rule)
+                            
+                            current_cors_normalized = json.dumps(sorted(current_crd_format, key=lambda x: json.dumps(x.get("allowedOrigins", []))))
+                            cors_changed = desired_cors_normalized != current_cors_normalized
+                        
+                        if cors_changed:
+                            drift_detected = True
+                            logger.info(f"Drift detected: CORS configuration for bucket {bucket_name}")
+                            metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="cors").inc()
+                            provider_client.set_bucket_cors(bucket_name, desired_cors_rules)
+                            metrics.bucket_operations_total.labels(operation="update_cors", result="success").inc()
+                    except Exception as e:
+                        logger.warning(f"Failed to reconcile CORS configuration for bucket {bucket_name}: {e}")
+                        metrics.bucket_operations_total.labels(operation="update_cors", result="failed").inc()
+                elif bucket_config.get("cors_rules") == []:
+                    # Explicitly empty CORS rules - delete if exists
+                    try:
+                        current_cors = provider_client.get_bucket_cors(bucket_name)
+                        if current_cors is not None:
+                            drift_detected = True
+                            logger.info(f"Drift detected: CORS should be removed for bucket {bucket_name}")
+                            metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="cors").inc()
+                            provider_client.delete_bucket_cors(bucket_name)
+                            metrics.bucket_operations_total.labels(operation="delete_cors", result="success").inc()
+                    except Exception as e:
+                        logger.warning(f"Failed to delete CORS configuration for bucket {bucket_name}: {e}")
+                
                 emit_bucket_updated(meta, bucket_name)
                 logger.info(f"Bucket {bucket_name} configuration reconciled")
                 metrics.bucket_operations_total.labels(operation="reconcile", result="success").inc()

@@ -127,6 +127,24 @@ class AWSProvider:
             if tags:
                 self.set_bucket_tags(name, tags)
 
+            # Configure lifecycle rules
+            lifecycle_rules = config.get("lifecycle_rules", [])
+            if lifecycle_rules:
+                try:
+                    self.set_bucket_lifecycle(name, lifecycle_rules)
+                except ClientError as lifecycle_error:
+                    # Log warning but don't fail bucket creation
+                    logger.warning(f"Failed to set lifecycle for bucket {name}: {lifecycle_error}. Bucket created without lifecycle configuration.")
+
+            # Configure CORS
+            cors_rules = config.get("cors_rules", [])
+            if cors_rules:
+                try:
+                    self.set_bucket_cors(name, cors_rules)
+                except ClientError as cors_error:
+                    # Log warning but don't fail bucket creation
+                    logger.warning(f"Failed to set CORS for bucket {name}: {cors_error}. Bucket created without CORS configuration.")
+
         except ClientError as e:
             logger.error(f"Failed to create bucket {name}: {e}")
             raise
@@ -442,6 +460,153 @@ class AWSProvider:
             )
         except ClientError as e:
             logger.error(f"Failed to set tags for bucket {name}: {e}")
+            raise
+
+    def get_bucket_lifecycle(self, name: str) -> dict[str, Any] | None:
+        """Get bucket lifecycle configuration.
+        
+        Returns:
+            Lifecycle configuration dict if exists, None otherwise
+        """
+        try:
+            response = self.client.get_bucket_lifecycle_configuration(Bucket=name)
+            return response
+        except ClientError as e:
+            # No lifecycle configuration - return None
+            if e.response.get("Error", {}).get("Code") == "NoSuchLifecycleConfiguration":
+                return None
+            logger.error(f"Failed to get lifecycle configuration for bucket {name}: {e}")
+            raise
+
+    def set_bucket_lifecycle(self, name: str, rules: list[dict[str, Any]]) -> None:
+        """Set bucket lifecycle configuration.
+        
+        Args:
+            name: Bucket name
+            rules: List of lifecycle rules in CRD format
+        """
+        try:
+            # Convert CRD format to AWS format
+            lifecycle_config = {"Rules": []}
+            
+            for rule in rules:
+                aws_rule: dict[str, Any] = {
+                    "ID": rule.get("id"),
+                    "Status": rule.get("status", "Enabled"),
+                }
+                
+                # Add prefix filter if specified
+                if "prefix" in rule:
+                    aws_rule["Filter"] = {"Prefix": rule["prefix"]}
+                
+                # Add expiration if specified
+                expiration = rule.get("expiration")
+                if expiration:
+                    if "days" in expiration:
+                        aws_rule["Expiration"] = {"Days": expiration["days"]}
+                    elif "date" in expiration:
+                        aws_rule["Expiration"] = {"Date": expiration["date"]}
+                
+                # Add transitions if specified
+                transitions = rule.get("transitions", [])
+                if transitions:
+                    aws_rule["Transitions"] = []
+                    for transition in transitions:
+                        aws_transition: dict[str, Any] = {
+                            "Days": transition["days"],
+                            "StorageClass": transition["storageClass"],
+                        }
+                        aws_rule["Transitions"].append(aws_transition)
+                
+                lifecycle_config["Rules"].append(aws_rule)
+            
+            self.client.put_bucket_lifecycle_configuration(
+                Bucket=name,
+                LifecycleConfiguration=lifecycle_config,
+            )
+            logger.info(f"Set lifecycle configuration for bucket {name}")
+        except ClientError as e:
+            logger.error(f"Failed to set lifecycle configuration for bucket {name}: {e}")
+            raise
+
+    def delete_bucket_lifecycle(self, name: str) -> None:
+        """Delete bucket lifecycle configuration."""
+        try:
+            self.client.delete_bucket_lifecycle(Bucket=name)
+            logger.info(f"Deleted lifecycle configuration for bucket {name}")
+        except ClientError as e:
+            # Ignore if lifecycle doesn't exist
+            if e.response.get("Error", {}).get("Code") == "NoSuchLifecycleConfiguration":
+                logger.debug(f"No lifecycle configuration to delete for bucket {name}")
+                return
+            logger.error(f"Failed to delete lifecycle configuration for bucket {name}: {e}")
+            raise
+
+    def get_bucket_cors(self, name: str) -> dict[str, Any] | None:
+        """Get bucket CORS configuration.
+        
+        Returns:
+            CORS configuration dict if exists, None otherwise
+        """
+        try:
+            response = self.client.get_bucket_cors(Bucket=name)
+            return response
+        except ClientError as e:
+            # No CORS configuration - return None
+            if e.response.get("Error", {}).get("Code") == "NoSuchCORSConfiguration":
+                return None
+            logger.error(f"Failed to get CORS configuration for bucket {name}: {e}")
+            raise
+
+    def set_bucket_cors(self, name: str, rules: list[dict[str, Any]]) -> None:
+        """Set bucket CORS configuration.
+        
+        Args:
+            name: Bucket name
+            rules: List of CORS rules in CRD format
+        """
+        try:
+            # Convert CRD format to AWS format
+            cors_config = {"CORSRules": []}
+            
+            for rule in rules:
+                aws_rule: dict[str, Any] = {
+                    "AllowedOrigins": rule.get("allowedOrigins", []),
+                    "AllowedMethods": rule.get("allowedMethods", []),
+                }
+                
+                # Add optional fields
+                if "allowedHeaders" in rule:
+                    aws_rule["AllowedHeaders"] = rule["allowedHeaders"]
+                
+                if "exposedHeaders" in rule:
+                    aws_rule["ExposedHeaders"] = rule["exposedHeaders"]
+                
+                if "maxAgeSeconds" in rule:
+                    aws_rule["MaxAgeSeconds"] = rule["maxAgeSeconds"]
+                
+                cors_config["CORSRules"].append(aws_rule)
+            
+            self.client.put_bucket_cors(
+                Bucket=name,
+                CORSConfiguration=cors_config,
+            )
+            logger.info(f"Set CORS configuration for bucket {name}")
+        except ClientError as e:
+            logger.error(f"Failed to set CORS configuration for bucket {name}: {e}")
+            raise
+
+    def delete_bucket_cors(self, name: str) -> None:
+        """Delete bucket CORS configuration."""
+        try:
+            self.client.delete_bucket_cors(Bucket=name)
+            logger.info(f"Deleted CORS configuration for bucket {name}")
+        except ClientError as e:
+            # Ignore if CORS doesn't exist
+            if e.response.get("Error", {}).get("Code") == "NoSuchCORSConfiguration":
+                logger.debug(f"No CORS configuration to delete for bucket {name}")
+                return
+            logger.error(f"Failed to delete CORS configuration for bucket {name}: {e}")
             raise
 
     def test_connectivity(self) -> bool:

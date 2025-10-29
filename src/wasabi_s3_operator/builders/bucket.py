@@ -33,6 +33,14 @@ def create_bucket_config_from_spec(spec: dict[str, Any], provider_region: str) -
     tagging = spec.get("tagging", {})
     tags = tagging.get("tags")
 
+    # Get lifecycle configuration
+    lifecycle = spec.get("lifecycle", {})
+    lifecycle_rules = lifecycle.get("rules", [])
+
+    # Get CORS configuration
+    cors = spec.get("cors", {})
+    cors_rules = cors.get("rules", [])
+
     # Convert to dict format for AWS client
     config_dict = {
         "region": region,
@@ -42,6 +50,8 @@ def create_bucket_config_from_spec(spec: dict[str, Any], provider_region: str) -
         "encryption_algorithm": encryption_algorithm,
         "kms_key_id": kms_key_id,
         "tags": tags,
+        "lifecycle_rules": lifecycle_rules,
+        "cors_rules": cors_rules,
     }
 
     return config_dict

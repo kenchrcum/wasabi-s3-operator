@@ -69,6 +69,34 @@ class S3Provider(Protocol):
         """Set bucket tags."""
         ...
 
+    def get_bucket_tags(self, name: str) -> dict[str, str]:
+        """Get bucket tags."""
+        ...
+
+    def get_bucket_lifecycle(self, name: str) -> dict[str, Any] | None:
+        """Get bucket lifecycle configuration."""
+        ...
+
+    def set_bucket_lifecycle(self, name: str, rules: list[dict[str, Any]]) -> None:
+        """Set bucket lifecycle configuration."""
+        ...
+
+    def delete_bucket_lifecycle(self, name: str) -> None:
+        """Delete bucket lifecycle configuration."""
+        ...
+
+    def get_bucket_cors(self, name: str) -> dict[str, Any] | None:
+        """Get bucket CORS configuration."""
+        ...
+
+    def set_bucket_cors(self, name: str, rules: list[dict[str, Any]]) -> None:
+        """Set bucket CORS configuration."""
+        ...
+
+    def delete_bucket_cors(self, name: str) -> None:
+        """Delete bucket CORS configuration."""
+        ...
+
     def test_connectivity(self) -> bool:
         """Test connectivity to the provider."""
         ...
