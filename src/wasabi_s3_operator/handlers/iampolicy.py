@@ -19,12 +19,7 @@ from ..utils.conditions import (
     set_provider_not_ready_condition,
     set_ready_condition,
 )
-from ..utils.events import (
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
-    emit_validate_succeeded,
-)
+from ..utils.events import emit_validate_succeeded
 from .base import BaseHandler
 
 
@@ -52,22 +47,13 @@ class IAMPolicyHandler(BaseHandler):
         with trace_span("reconcile_iampolicy", kind=KIND_IAM_POLICY, attributes={"policy.name": name}):
             # Validate spec
             if not provider_name:
-                error_msg = "providerRef.name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "providerRef.name is required")
 
             if not policy:
-                error_msg = "policy is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "policy is required")
 
             if not isinstance(policy, dict) or "statement" not in policy:
-                error_msg = "policy must contain 'statement' field"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "policy must contain 'statement' field")
 
             emit_validate_succeeded(meta)
 
@@ -86,15 +72,7 @@ class IAMPolicyHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
-                    self.logger.error(error_msg)
-                    conditions = status.get("conditions", [])
-                    conditions = set_provider_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
-                    metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
-                    patch.status.update({
-                        "conditions": conditions,
-                        "observedGeneration": meta.get("generation", 0),
-                    })
+                    self.handle_provider_not_found(meta, status, patch, provider_name, provider_ns, error_msg)
                     return
                 raise
 
@@ -107,16 +85,7 @@ class IAMPolicyHandler(BaseHandler):
 
             if not provider_ready:
                 error_msg = f"Provider {provider_name} is not ready"
-                self.logger.warning(error_msg)
-                conditions = status.get("conditions", [])
-                conditions = set_provider_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
-                patch.status.update({
-                    "conditions": conditions,
-                    "observedGeneration": meta.get("generation", 0),
-                })
-                raise kopf.TemporaryError(error_msg)
+                self.handle_provider_not_ready(meta, status, patch, provider_name, error_msg)
 
             # Create provider client
             provider_spec = provider_obj.get("spec", {})
@@ -148,14 +117,14 @@ class IAMPolicyHandler(BaseHandler):
                     if not policy_arn:
                         policy_arn = f"arn:aws:iam::*:policy/{name}"
 
-                    self.logger.info(f"Created managed policy {name} with ARN {policy_arn}")
+                    self.log_info(meta, f"Created managed policy {name} with ARN {policy_arn}",
+                                 reason="PolicyCreated", policy_name=name, policy_arn=policy_arn)
                     conditions = set_ready_condition(conditions, True, f"IAMPolicy {name} is ready")
 
                 except Exception as e:
                     error_msg = f"Failed to create managed policy: {str(e)}"
-                    self.logger.error(error_msg)
+                    self.log_error(meta, error_msg, error=e, reason="PolicyCreationFailed", policy_name=name)
                     conditions = set_attach_failed_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
                     metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="failed").inc()
                     patch.status.update({
                         "conditions": conditions,
@@ -164,8 +133,7 @@ class IAMPolicyHandler(BaseHandler):
                     raise
 
             # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
+            status_data = {
                 "applied": True,
                 "policyArn": policy_arn,
                 "attachedUsers": [],  # Will be populated when users reference this policy
@@ -173,8 +141,7 @@ class IAMPolicyHandler(BaseHandler):
                 "conditions": conditions,
             }
 
-            metrics.reconcile_total.labels(kind=KIND_IAM_POLICY, result="success").inc()
-            patch.status.update(status_update)
+            self.update_resource_status(patch, meta, True, status_data)
 
     def delete(
         self,
@@ -186,7 +153,7 @@ class IAMPolicyHandler(BaseHandler):
         name = meta.get("name", "unknown")
         namespace = meta.get("namespace", "default")
 
-        self.logger.info(f"IAMPolicy {name} is being deleted")
+        self.log_info(meta, f"IAMPolicy {name} is being deleted", event="deletion", reason="Deletion")
 
         try:
             provider_ref = spec.get("providerRef", {})
@@ -209,11 +176,14 @@ class IAMPolicyHandler(BaseHandler):
                     provider_client = create_provider_from_spec(provider_spec, provider_obj.get("metadata", {}))
 
                     provider_client.delete_managed_policy(name)
-                    self.logger.info(f"Deleted managed policy {name} from Wasabi")
+                    self.log_info(meta, f"Deleted managed policy {name} from Wasabi",
+                                 reason="PolicyDeleted", policy_name=name)
                 except Exception as e:
-                    self.logger.error(f"Failed to delete managed policy {name}: {e}")
+                    self.log_error(meta, f"Failed to delete managed policy {name}", 
+                                  error=e, reason="PolicyDeletionFailed", policy_name=name)
         except Exception as e:
-            self.logger.error(f"Failed to delete IAMPolicy {name}: {e}")
+            self.log_error(meta, f"Failed to delete IAMPolicy {name}", 
+                          error=e, reason="DeletionFailed", policy_name=name)
         finally:
             self.remove_finalizer(meta, patch)
 

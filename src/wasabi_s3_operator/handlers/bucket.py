@@ -27,9 +27,6 @@ from ..utils.events import (
     emit_bucket_created,
     emit_bucket_deleted,
     emit_bucket_updated,
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
     emit_validate_succeeded,
 )
 from .base import BaseHandler
@@ -58,17 +55,11 @@ class BucketHandler(BaseHandler):
         with trace_span("reconcile_bucket", kind=KIND_BUCKET, attributes={"bucket.name": bucket_name or name}):
             # Validate spec
             if not bucket_name:
-                error_msg = "bucket name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "bucket name is required")
 
             provider_name = provider_ref.get("name")
             if not provider_name:
-                error_msg = "providerRef.name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "providerRef.name is required")
 
             emit_validate_succeeded(meta)
 
@@ -81,15 +72,7 @@ class BucketHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
-                    self.logger.error(error_msg)
-                    conditions = status.get("conditions", [])
-                    conditions = set_provider_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
-                    metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                    patch.status.update({
-                        "conditions": conditions,
-                        "observedGeneration": meta.get("generation", 0),
-                    })
+                    self.handle_provider_not_found(meta, status, patch, provider_name, provider_ns, error_msg)
                     return
                 raise
 
@@ -102,16 +85,7 @@ class BucketHandler(BaseHandler):
 
             if not provider_ready:
                 error_msg = f"Provider {provider_name} is not ready"
-                self.logger.warning(error_msg)
-                conditions = status.get("conditions", [])
-                conditions = set_provider_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
-                patch.status.update({
-                    "conditions": conditions,
-                    "observedGeneration": meta.get("generation", 0),
-                })
-                raise kopf.TemporaryError(error_msg)
+                self.handle_provider_not_ready(meta, status, patch, provider_name, error_msg)
 
             # Create provider client
             provider_spec = provider_obj.get("spec", {})
@@ -131,14 +105,12 @@ class BucketHandler(BaseHandler):
                     try:
                         provider_client.create_bucket(bucket_name, bucket_config)
                         emit_bucket_created(meta, bucket_name)
-                        self.logger.info(f"Created bucket {bucket_name}")
+                        self.log_info(meta, f"Created bucket {bucket_name}", reason="BucketCreated", bucket_name=bucket_name)
                         metrics.bucket_operations_total.labels(operation="create", result="success").inc()
                     except Exception as e:
                         error_msg = f"Failed to create bucket: {str(e)}"
-                        self.logger.error(error_msg)
+                        self.log_error(meta, error_msg, error=e, reason="CreationFailed", bucket_name=bucket_name)
                         conditions = set_creation_failed_condition(conditions, error_msg)
-                        emit_reconcile_failed(meta, error_msg)
-                        metrics.reconcile_total.labels(kind=KIND_BUCKET, result="failed").inc()
                         metrics.bucket_operations_total.labels(operation="create", result="failed").inc()
                         patch.status.update({
                             "exists": False,
@@ -147,7 +119,8 @@ class BucketHandler(BaseHandler):
                         })
             else:
                 # Bucket exists - reconcile configuration changes
-                self.logger.info(f"Bucket {bucket_name} already exists, checking for configuration drift")
+                self.log_info(meta, f"Bucket {bucket_name} already exists, checking for configuration drift", 
+                             reason="DriftCheck", bucket_name=bucket_name)
                 self._reconcile_bucket_configuration(provider_client, bucket_name, bucket_config, meta)
 
             # Handle auto-management if enabled
@@ -165,8 +138,7 @@ class BucketHandler(BaseHandler):
             conditions = set_ready_condition(conditions, True, f"Bucket {bucket_name} is ready")
 
             # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
+            status_data = {
                 "bucketName": bucket_name,
                 "exists": True,
                 "lastSyncTime": datetime.now(timezone.utc).isoformat(),
@@ -175,10 +147,9 @@ class BucketHandler(BaseHandler):
 
             # Add credentials secret reference if auto-management is enabled
             if auto_manage_enabled and accesskey_crd_name:
-                status_update["credentialsSecret"] = f"{accesskey_crd_name}-credentials"
+                status_data["credentialsSecret"] = f"{accesskey_crd_name}-credentials"
 
-            metrics.reconcile_total.labels(kind=KIND_BUCKET, result="success").inc()
-            patch.status.update(status_update)
+            self.update_resource_status(patch, meta, True, status_data)
 
     def _reconcile_bucket_configuration(
         self,
@@ -196,7 +167,8 @@ class BucketHandler(BaseHandler):
 
             if current_versioning.get("enabled") != desired_versioning_enabled or \
                current_versioning.get("mfa_delete") != desired_mfa_delete:
-                self.logger.info(f"Drift detected: versioning configuration for bucket {bucket_name}")
+                self.log_info(meta, f"Drift detected: versioning configuration for bucket {bucket_name}",
+                             reason="DriftDetected", bucket_name=bucket_name, resource_type="versioning")
                 metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="versioning").inc()
                 provider_client.set_bucket_versioning(bucket_name, desired_versioning_enabled, desired_mfa_delete)
                 metrics.bucket_operations_total.labels(operation="update_versioning", result="success").inc()
@@ -212,16 +184,19 @@ class BucketHandler(BaseHandler):
 
             if desired_encryption_enabled:
                 if current_algorithm != desired_algorithm or current_kms_key_id != desired_kms_key_id:
-                    self.logger.info(f"Drift detected: encryption configuration for bucket {bucket_name}")
+                    self.log_info(meta, f"Drift detected: encryption configuration for bucket {bucket_name}",
+                                 reason="DriftDetected", bucket_name=bucket_name, resource_type="encryption")
                     metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="encryption").inc()
                     try:
                         provider_client.set_bucket_encryption(bucket_name, desired_algorithm, desired_kms_key_id)
                         metrics.bucket_operations_total.labels(operation="update_encryption", result="success").inc()
                     except Exception as e:
-                        self.logger.warning(f"Failed to update encryption for bucket {bucket_name}: {e}")
+                        self.log_warning(meta, f"Failed to update encryption for bucket {bucket_name}: {e}",
+                                       reason="EncryptionUpdateFailed", bucket_name=bucket_name, error=str(e))
                         metrics.bucket_operations_total.labels(operation="update_encryption", result="failed").inc()
             elif current_algorithm is not None:
-                self.logger.info(f"Drift detected: encryption is enabled on bucket {bucket_name} but desired state is disabled")
+                self.log_info(meta, f"Drift detected: encryption is enabled on bucket {bucket_name} but desired state is disabled",
+                             reason="DriftDetected", bucket_name=bucket_name, resource_type="encryption")
                 metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="encryption").inc()
 
             # Check tags configuration
@@ -229,7 +204,8 @@ class BucketHandler(BaseHandler):
             if desired_tags:
                 current_tags = provider_client.get_bucket_tags(bucket_name)
                 if current_tags != desired_tags:
-                    self.logger.info(f"Drift detected: tags configuration for bucket {bucket_name}")
+                    self.log_info(meta, f"Drift detected: tags configuration for bucket {bucket_name}",
+                                 reason="DriftDetected", bucket_name=bucket_name, resource_type="tags")
                     metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="tags").inc()
                     provider_client.set_bucket_tags(bucket_name, desired_tags)
                     metrics.bucket_operations_total.labels(operation="update_tags", result="success").inc()
@@ -276,23 +252,27 @@ class BucketHandler(BaseHandler):
                         lifecycle_changed = desired_lifecycle_normalized != current_lifecycle_normalized
 
                     if lifecycle_changed:
-                        self.logger.info(f"Drift detected: lifecycle configuration for bucket {bucket_name}")
+                        self.log_info(meta, f"Drift detected: lifecycle configuration for bucket {bucket_name}",
+                                     reason="DriftDetected", bucket_name=bucket_name, resource_type="lifecycle")
                         metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="lifecycle").inc()
                         provider_client.set_bucket_lifecycle(bucket_name, desired_lifecycle_rules)
                         metrics.bucket_operations_total.labels(operation="update_lifecycle", result="success").inc()
                 except Exception as e:
-                    self.logger.warning(f"Failed to reconcile lifecycle configuration for bucket {bucket_name}: {e}")
+                    self.log_warning(meta, f"Failed to reconcile lifecycle configuration for bucket {bucket_name}: {e}",
+                                   reason="LifecycleReconcileFailed", bucket_name=bucket_name, error=str(e))
                     metrics.bucket_operations_total.labels(operation="update_lifecycle", result="failed").inc()
             elif bucket_config.get("lifecycle_rules") == []:
                 try:
                     current_lifecycle = provider_client.get_bucket_lifecycle(bucket_name)
                     if current_lifecycle is not None:
-                        self.logger.info(f"Drift detected: lifecycle should be removed for bucket {bucket_name}")
+                        self.log_info(meta, f"Drift detected: lifecycle should be removed for bucket {bucket_name}",
+                                     reason="DriftDetected", bucket_name=bucket_name, resource_type="lifecycle")
                         metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="lifecycle").inc()
                         provider_client.delete_bucket_lifecycle(bucket_name)
                         metrics.bucket_operations_total.labels(operation="delete_lifecycle", result="success").inc()
                 except Exception as e:
-                    self.logger.warning(f"Failed to delete lifecycle configuration for bucket {bucket_name}: {e}")
+                    self.log_warning(meta, f"Failed to delete lifecycle configuration for bucket {bucket_name}: {e}",
+                                   reason="LifecycleDeleteFailed", bucket_name=bucket_name, error=str(e))
 
             # Check CORS configuration
             desired_cors_rules = bucket_config.get("cors_rules", [])
@@ -329,29 +309,35 @@ class BucketHandler(BaseHandler):
                         cors_changed = desired_cors_normalized != current_cors_normalized
 
                     if cors_changed:
-                        self.logger.info(f"Drift detected: CORS configuration for bucket {bucket_name}")
+                        self.log_info(meta, f"Drift detected: CORS configuration for bucket {bucket_name}",
+                                     reason="DriftDetected", bucket_name=bucket_name, resource_type="cors")
                         metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="cors").inc()
                         provider_client.set_bucket_cors(bucket_name, desired_cors_rules)
                         metrics.bucket_operations_total.labels(operation="update_cors", result="success").inc()
                 except Exception as e:
-                    self.logger.warning(f"Failed to reconcile CORS configuration for bucket {bucket_name}: {e}")
+                    self.log_warning(meta, f"Failed to reconcile CORS configuration for bucket {bucket_name}: {e}",
+                                   reason="CORSReconcileFailed", bucket_name=bucket_name, error=str(e))
                     metrics.bucket_operations_total.labels(operation="update_cors", result="failed").inc()
             elif bucket_config.get("cors_rules") == []:
                 try:
                     current_cors = provider_client.get_bucket_cors(bucket_name)
                     if current_cors is not None:
-                        self.logger.info(f"Drift detected: CORS should be removed for bucket {bucket_name}")
+                        self.log_info(meta, f"Drift detected: CORS should be removed for bucket {bucket_name}",
+                                     reason="DriftDetected", bucket_name=bucket_name, resource_type="cors")
                         metrics.drift_detected_total.labels(kind=KIND_BUCKET, resource_type="cors").inc()
                         provider_client.delete_bucket_cors(bucket_name)
                         metrics.bucket_operations_total.labels(operation="delete_cors", result="success").inc()
                 except Exception as e:
-                    self.logger.warning(f"Failed to delete CORS configuration for bucket {bucket_name}: {e}")
+                    self.log_warning(meta, f"Failed to delete CORS configuration for bucket {bucket_name}: {e}",
+                                   reason="CORSDeleteFailed", bucket_name=bucket_name, error=str(e))
 
             emit_bucket_updated(meta, bucket_name)
-            self.logger.info(f"Bucket {bucket_name} configuration reconciled")
+            self.log_info(meta, f"Bucket {bucket_name} configuration reconciled",
+                         reason="ConfigurationReconciled", bucket_name=bucket_name)
             metrics.bucket_operations_total.labels(operation="reconcile", result="success").inc()
         except Exception as e:
-            self.logger.warning(f"Failed to reconcile bucket configuration for {bucket_name}: {e}")
+            self.log_warning(meta, f"Failed to reconcile bucket configuration for {bucket_name}: {e}",
+                           reason="ReconciliationFailed", bucket_name=bucket_name, error=str(e))
             metrics.bucket_operations_total.labels(operation="reconcile", result="failed").inc()
 
     def _handle_auto_management(
@@ -406,7 +392,8 @@ class BucketHandler(BaseHandler):
                     plural="users",
                     name=user_crd_name,
                 )
-                self.logger.info(f"User {user_crd_name} already exists")
+                self.log_info(meta, f"User {user_crd_name} already exists",
+                             reason="UserExists", user_crd_name=user_crd_name, bucket_name=bucket_name)
                 user_status = existing_user.get("status", {})
                 user_conditions = user_status.get("conditions", [])
                 user_ready = any(
@@ -437,7 +424,8 @@ class BucketHandler(BaseHandler):
                             "tags": {"ManagedBy": "wasabi-s3-operator", "Bucket": bucket_name},
                         },
                     }
-                    self.logger.info(f"Creating User CRD {user_crd_name} with policy: {user_policy}")
+                    self.log_info(meta, f"Creating User CRD {user_crd_name} with policy",
+                                 reason="UserCreation", user_crd_name=user_crd_name, bucket_name=bucket_name)
                     api.create_namespaced_custom_object(
                         group="s3.cloud37.dev",
                         version="v1alpha1",
@@ -445,7 +433,8 @@ class BucketHandler(BaseHandler):
                         plural="users",
                         body=user_body,
                     )
-                    self.logger.info(f"Created user {user_crd_name} with inline policy")
+                    self.log_info(meta, f"Created user {user_crd_name} with inline policy",
+                                 reason="UserCreated", user_crd_name=user_crd_name, bucket_name=bucket_name)
 
                     # Wait for user to be ready
                     max_wait_time = int(os.getenv("USER_READINESS_TIMEOUT_SECONDS", "60"))
@@ -466,14 +455,16 @@ class BucketHandler(BaseHandler):
                             )
 
                             if user_ready:
-                                self.logger.info(f"User {user_crd_name} is now ready")
-                            else:
-                                self.logger.debug(f"Waiting for user {user_crd_name} to be ready... ({elapsed_time}s)")
+                                self.log_info(meta, f"User {user_crd_name} is now ready",
+                                             reason="UserReady", user_crd_name=user_crd_name, bucket_name=bucket_name)
+                            # Note: debug logs remain as logger.debug since BaseHandler doesn't provide log_debug
                         except client.exceptions.ApiException:
                             pass
 
                     if not user_ready:
-                        self.logger.warning(f"User {user_crd_name} not ready after {max_wait_time}s, proceeding anyway")
+                        self.log_warning(meta, f"User {user_crd_name} not ready after {max_wait_time}s, proceeding anyway",
+                                        reason="UserNotReadyTimeout", user_crd_name=user_crd_name, 
+                                        max_wait_time=max_wait_time, bucket_name=bucket_name)
                 else:
                     raise
 
@@ -487,7 +478,8 @@ class BucketHandler(BaseHandler):
                         plural="accesskeys",
                         name=accesskey_crd_name,
                     )
-                    self.logger.info(f"AccessKey {accesskey_crd_name} already exists")
+                    self.log_info(meta, f"AccessKey {accesskey_crd_name} already exists",
+                                 reason="AccessKeyExists", accesskey_crd_name=accesskey_crd_name, bucket_name=bucket_name)
                 except client.exceptions.ApiException as e:
                     if e.status == 404:
                         rotation_config = auto_manage.get("rotation", {})
@@ -521,11 +513,13 @@ class BucketHandler(BaseHandler):
                             plural="accesskeys",
                             body=accesskey_body,
                         )
-                        self.logger.info(f"Created access key {accesskey_crd_name}")
+                        self.log_info(meta, f"Created access key {accesskey_crd_name}",
+                                     reason="AccessKeyCreated", accesskey_crd_name=accesskey_crd_name, bucket_name=bucket_name)
                     else:
                         raise
             else:
-                self.logger.warning(f"Skipping AccessKey creation for {name} as user {user_crd_name} is not ready")
+                self.log_warning(meta, f"Skipping AccessKey creation for {name} as user {user_crd_name} is not ready",
+                               reason="AccessKeyCreationSkipped", name=name, user_crd_name=user_crd_name, bucket_name=bucket_name)
 
             # Step 3: Create BucketPolicy
             bucketpolicy_crd_name = f"{name}-policy"
@@ -537,7 +531,8 @@ class BucketHandler(BaseHandler):
                     plural="bucketpolicies",
                     name=bucketpolicy_crd_name,
                 )
-                self.logger.info(f"BucketPolicy {bucketpolicy_crd_name} already exists")
+                self.log_info(meta, f"BucketPolicy {bucketpolicy_crd_name} already exists",
+                             reason="BucketPolicyExists", bucketpolicy_crd_name=bucketpolicy_crd_name, bucket_name=bucket_name)
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     user_arn = f"arn:aws:iam::*:user/{user_name}"
@@ -576,7 +571,9 @@ class BucketHandler(BaseHandler):
                             },
                         },
                     }
-                    self.logger.info(f"Creating BucketPolicy {bucketpolicy_crd_name} for user {user_name}")
+                    self.log_info(meta, f"Creating BucketPolicy {bucketpolicy_crd_name} for user {user_name}",
+                                 reason="BucketPolicyCreation", bucketpolicy_crd_name=bucketpolicy_crd_name, 
+                                 user_name=user_name, bucket_name=bucket_name)
                     api.create_namespaced_custom_object(
                         group="s3.cloud37.dev",
                         version="v1alpha1",
@@ -584,13 +581,15 @@ class BucketHandler(BaseHandler):
                         plural="bucketpolicies",
                         body=bucketpolicy_body,
                     )
-                    self.logger.info(f"Created bucket policy {bucketpolicy_crd_name}")
+                    self.log_info(meta, f"Created bucket policy {bucketpolicy_crd_name}",
+                                 reason="BucketPolicyCreated", bucketpolicy_crd_name=bucketpolicy_crd_name, bucket_name=bucket_name)
                 else:
                     raise
 
             return accesskey_crd_name
         except Exception as e:
-            self.logger.error(f"Failed to auto-manage resources for bucket {bucket_name}: {e}")
+            self.log_error(meta, f"Failed to auto-manage resources for bucket {bucket_name}", 
+                          error=e, reason="AutoManagementFailed", bucket_name=bucket_name)
             return None
 
     def delete(
@@ -603,14 +602,15 @@ class BucketHandler(BaseHandler):
         name = meta.get("name", "unknown")
         bucket_name = spec.get("name")
 
-        self.logger.info(f"Bucket {name} is being deleted")
+        self.log_info(meta, f"Bucket {name} is being deleted", event="deletion", reason="Deletion", bucket_name=bucket_name or name)
 
         if bucket_name:
             try:
                 deletion_policy = spec.get("deletionPolicy", "Retain")
                 force_delete = spec.get("forceDelete", False)
 
-                self.logger.info(f"Deletion policy for bucket {bucket_name}: {deletion_policy}, forceDelete: {force_delete}")
+                self.log_info(meta, f"Deletion policy for bucket {bucket_name}: {deletion_policy}, forceDelete: {force_delete}",
+                             reason="DeletionPolicy", bucket_name=bucket_name, deletion_policy=deletion_policy, force_delete=force_delete)
 
                 provider_ref = spec.get("providerRef", {})
                 provider_name = provider_ref.get("name")
@@ -628,14 +628,16 @@ class BucketHandler(BaseHandler):
                         if deletion_policy == "Delete":
                             provider_client.delete_bucket(bucket_name, force=force_delete)
                             emit_bucket_deleted(meta, bucket_name)
-                            self.logger.info(f"Deleted bucket {bucket_name}")
+                            self.log_info(meta, f"Deleted bucket {bucket_name}", reason="BucketDeleted", bucket_name=bucket_name)
                         else:
-                            self.logger.info(f"Retaining bucket {bucket_name} per deletionPolicy=Retain")
+                            self.log_info(meta, f"Retaining bucket {bucket_name} per deletionPolicy=Retain",
+                                        reason="BucketRetained", bucket_name=bucket_name)
                             emit_bucket_deleted(meta, bucket_name)
                     else:
-                        self.logger.info(f"Bucket {bucket_name} does not exist, skipping deletion")
+                        self.log_info(meta, f"Bucket {bucket_name} does not exist, skipping deletion",
+                                     reason="BucketNotExists", bucket_name=bucket_name)
             except Exception as e:
-                self.logger.error(f"Failed to delete bucket {bucket_name}: {e}")
+                self.log_error(meta, f"Failed to delete bucket {bucket_name}", error=e, reason="DeletionFailed", bucket_name=bucket_name)
             finally:
                 self.remove_finalizer(meta, patch)
         else:

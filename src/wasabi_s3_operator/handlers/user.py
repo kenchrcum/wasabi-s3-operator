@@ -18,12 +18,7 @@ from ..utils.conditions import (
     set_provider_not_ready_condition,
     set_ready_condition,
 )
-from ..utils.events import (
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
-    emit_validate_succeeded,
-)
+from ..utils.events import emit_validate_succeeded
 from .base import BaseHandler
 
 
@@ -51,16 +46,10 @@ class UserHandler(BaseHandler):
         with trace_span("reconcile_user", kind=KIND_USER, attributes={"user.name": user_name or name}):
             # Validate spec
             if not provider_name:
-                error_msg = "providerRef.name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "providerRef.name is required")
 
             if not user_name:
-                error_msg = "user name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "user name is required")
 
             emit_validate_succeeded(meta)
 
@@ -79,15 +68,7 @@ class UserHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
-                    self.logger.error(error_msg)
-                    conditions = status.get("conditions", [])
-                    conditions = set_provider_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
-                    metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                    patch.status.update({
-                        "conditions": conditions,
-                        "observedGeneration": meta.get("generation", 0),
-                    })
+                    self.handle_provider_not_found(meta, status, patch, provider_name, provider_ns, error_msg)
                     return
                 raise
 
@@ -100,16 +81,7 @@ class UserHandler(BaseHandler):
 
             if not provider_ready:
                 error_msg = f"Provider {provider_name} is not ready"
-                self.logger.warning(error_msg)
-                conditions = status.get("conditions", [])
-                conditions = set_provider_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_USER, result="failed").inc()
-                patch.status.update({
-                    "conditions": conditions,
-                    "observedGeneration": meta.get("generation", 0),
-                })
-                raise kopf.TemporaryError(error_msg)
+                self.handle_provider_not_ready(meta, status, patch, provider_name, error_msg)
 
             # Create provider client
             provider_spec = provider_obj.get("spec", {})
@@ -123,7 +95,7 @@ class UserHandler(BaseHandler):
                 self._create_user(provider_client, api, namespace, user_name, spec, meta, status, patch, conditions)
             else:
                 # User already exists
-                self.logger.info(f"User {user_name} already exists")
+                self.log_info(meta, f"User {user_name} already exists", reason="UserExists", user_name=user_name)
                 conditions = set_ready_condition(conditions, True, f"User {user_name} is ready")
 
                 status_update = {
@@ -305,7 +277,7 @@ class UserHandler(BaseHandler):
         name = meta.get("name", "unknown")
         user_name = spec.get("name")
 
-        self.logger.info(f"User {name} is being deleted")
+        self.log_info(meta, f"User {name} is being deleted", event="deletion", reason="Deletion", user_name=name)
 
         if user_name:
             try:

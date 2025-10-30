@@ -24,9 +24,6 @@ from ..utils.conditions import (
 from ..utils.events import (
     emit_policy_applied,
     emit_policy_failed,
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
     emit_validate_succeeded,
 )
 from .base import BaseHandler
@@ -56,22 +53,13 @@ class BucketPolicyHandler(BaseHandler):
             # Validate spec
             bucket_name = bucket_ref.get("name")
             if not bucket_name:
-                error_msg = "bucketRef.name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "bucketRef.name is required")
 
             if not policy:
-                error_msg = "policy is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "policy is required")
 
             if not isinstance(policy, dict) or "statement" not in policy:
-                error_msg = "policy must contain 'statement' field"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "policy must contain 'statement' field")
 
             emit_validate_succeeded(meta)
 
@@ -90,10 +78,9 @@ class BucketPolicyHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"Bucket {bucket_name} not found in namespace {bucket_ns}"
-                    self.logger.error(error_msg)
+                    self.log_error(meta, error_msg, reason="BucketNotFound", bucket_name=bucket_name, bucket_ns=bucket_ns)
                     conditions = status.get("conditions", [])
                     conditions = set_bucket_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
                     metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
                     patch.status.update({
                         "conditions": conditions,
@@ -111,10 +98,9 @@ class BucketPolicyHandler(BaseHandler):
 
             if not bucket_ready:
                 error_msg = f"Bucket {bucket_name} is not ready"
-                self.logger.warning(error_msg)
+                self.log_warning(meta, error_msg, reason="BucketNotReady", bucket_name=bucket_name)
                 conditions = status.get("conditions", [])
                 conditions = set_bucket_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
                 patch.status.update({
                     "conditions": conditions,
@@ -129,10 +115,9 @@ class BucketPolicyHandler(BaseHandler):
 
             if not provider_name:
                 error_msg = "Bucket provider reference not found"
-                self.logger.error(error_msg)
+                self.log_error(meta, error_msg, reason="ProviderRefNotFound", bucket_name=bucket_name)
                 conditions = status.get("conditions", [])
                 conditions = set_bucket_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
                 patch.status.update({
                     "conditions": conditions,
@@ -156,9 +141,8 @@ class BucketPolicyHandler(BaseHandler):
                     # Check if bucket exists
                     if not provider_client.bucket_exists(bucket_name):
                         error_msg = f"Bucket {bucket_name} does not exist in provider"
-                        self.logger.error(error_msg)
+                        self.log_error(meta, error_msg, reason="BucketNotExists", bucket_name=bucket_name)
                         conditions = set_bucket_not_ready_condition(conditions, error_msg)
-                        emit_reconcile_failed(meta, error_msg)
                         metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
                         patch.status.update({
                             "conditions": conditions,
@@ -180,31 +164,36 @@ class BucketPolicyHandler(BaseHandler):
                                 policy_changed = current_policy_normalized != desired_policy_normalized
 
                                 if not policy_changed:
-                                    self.logger.info(f"Policy for bucket {bucket_name} unchanged, skipping update")
+                                    self.log_info(meta, f"Policy for bucket {bucket_name} unchanged, skipping update",
+                                                 reason="PolicyUnchanged", bucket_name=bucket_name)
                                 else:
-                                    self.logger.info(f"Drift detected: policy for bucket {bucket_name}")
+                                    self.log_info(meta, f"Drift detected: policy for bucket {bucket_name}",
+                                                 reason="DriftDetected", bucket_name=bucket_name, resource_type="policy")
                                     metrics.drift_detected_total.labels(kind=KIND_BUCKET_POLICY, resource_type="policy").inc()
                         else:
-                            self.logger.info(f"No existing policy for bucket {bucket_name}, will create new policy")
+                            self.log_info(meta, f"No existing policy for bucket {bucket_name}, will create new policy",
+                                         reason="PolicyCreation", bucket_name=bucket_name)
                             policy_changed = True
                     except Exception as e:
-                        self.logger.debug(f"Could not get current policy for comparison: {e}")
+                        # Note: debug logs remain as logger.debug since BaseHandler doesn't provide log_debug
                         policy_changed = True
 
                     # Apply policy only if it changed
                     if policy_changed:
                         provider_client.set_bucket_policy(bucket_name, policy)
                         emit_policy_applied(meta, bucket_name)
-                        self.logger.info(f"Applied policy to bucket {bucket_name}")
+                        self.log_info(meta, f"Applied policy to bucket {bucket_name}",
+                                     reason="PolicyApplied", bucket_name=bucket_name)
                     else:
-                        self.logger.info(f"Policy for bucket {bucket_name} is already up to date")
+                        self.log_info(meta, f"Policy for bucket {bucket_name} is already up to date",
+                                     reason="PolicyUpToDate", bucket_name=bucket_name)
 
                     # Set ready condition
                     conditions = set_ready_condition(conditions, True, f"Policy applied to bucket {bucket_name}")
 
                 except Exception as e:
                     error_msg = f"Failed to apply policy: {str(e)}"
-                    self.logger.error(error_msg)
+                    self.log_error(meta, error_msg, error=e, reason="PolicyApplyFailed", bucket_name=bucket_name)
                     conditions = set_apply_failed_condition(conditions, error_msg)
                     emit_policy_failed(meta, error_msg)
                     metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="failed").inc()
@@ -215,15 +204,13 @@ class BucketPolicyHandler(BaseHandler):
                     })
 
             # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
+            status_data = {
                 "applied": True,
                 "lastSyncTime": datetime.now(timezone.utc).isoformat(),
                 "conditions": conditions,
             }
 
-            metrics.reconcile_total.labels(kind=KIND_BUCKET_POLICY, result="success").inc()
-            patch.status.update(status_update)
+            self.update_resource_status(patch, meta, True, status_data)
 
     def delete(
         self,
@@ -236,7 +223,7 @@ class BucketPolicyHandler(BaseHandler):
         bucket_ref = spec.get("bucketRef", {})
         bucket_name = bucket_ref.get("name")
 
-        self.logger.info(f"BucketPolicy {name} is being deleted")
+        self.log_info(meta, f"BucketPolicy {name} is being deleted", event="deletion", reason="Deletion", bucket_name=bucket_name or name)
 
         if bucket_name:
             try:
@@ -265,9 +252,11 @@ class BucketPolicyHandler(BaseHandler):
 
                     if provider_client.bucket_exists(bucket_name):
                         provider_client.delete_bucket_policy(bucket_name)
-                        self.logger.info(f"Deleted policy from bucket {bucket_name}")
+                        self.log_info(meta, f"Deleted policy from bucket {bucket_name}",
+                                     reason="PolicyDeleted", bucket_name=bucket_name)
             except Exception as e:
-                self.logger.error(f"Failed to delete policy from bucket {bucket_name}: {e}")
+                self.log_error(meta, f"Failed to delete policy from bucket {bucket_name}", 
+                              error=e, reason="PolicyDeletionFailed", bucket_name=bucket_name)
             finally:
                 self.remove_finalizer(meta, patch)
         else:

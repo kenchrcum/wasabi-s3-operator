@@ -17,12 +17,7 @@ from ..utils.conditions import (
     set_ready_condition,
 )
 from ..utils.errors import sanitize_exception
-from ..utils.events import (
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
-    emit_validate_succeeded,
-)
+from ..utils.events import emit_validate_succeeded
 from .base import BaseHandler
 
 
@@ -46,10 +41,7 @@ class ProviderHandler(BaseHandler):
         with trace_span("reconcile_provider", kind=KIND_PROVIDER, attributes={"provider.name": name}):
             # Validate spec
             if not spec.get("endpoint") or not spec.get("region"):
-                error_msg = "endpoint and region are required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "endpoint and region are required")
 
             emit_validate_succeeded(meta)
 
@@ -68,7 +60,7 @@ class ProviderHandler(BaseHandler):
                     auth_message = f"Authentication failed: {sanitized_error}"
                     error_type = type(e).__name__
                     metrics.error_total.labels(kind=KIND_PROVIDER, error_type=error_type).inc()
-                    self.logger.error(f"Failed to create provider for {name}: {sanitized_error}")
+                    self.log_error(meta, f"Failed to create provider: {sanitized_error}", error=e, reason="AuthFailed")
 
             conditions = set_auth_valid_condition(conditions, auth_valid, auth_message)
 
@@ -88,7 +80,7 @@ class ProviderHandler(BaseHandler):
                         endpoint_message = f"Connectivity test failed: {sanitized_error}"
                         error_type = type(e).__name__
                         metrics.error_total.labels(kind=KIND_PROVIDER, error_type=error_type).inc()
-                        self.logger.error(f"Connectivity test failed for {name}: {sanitized_error}")
+                        self.log_error(meta, f"Connectivity test failed: {sanitized_error}", error=e, reason="ConnectivityFailed")
                         metrics.provider_connectivity_total.labels(provider=name, status="error").inc()
             else:
                 connected = False
@@ -102,22 +94,12 @@ class ProviderHandler(BaseHandler):
             conditions = set_ready_condition(conditions, ready, ready_message)
 
             # Update status
-            status_update = {
-                "observedGeneration": meta.get("generation", 0),
+            status_data = {
                 "connected": connected,
                 "lastConnectTime": datetime.now(timezone.utc).isoformat() if connected else None,
                 "conditions": conditions,
             }
-
-            if ready:
-                metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="success").inc()
-                metrics.resource_status_total.labels(kind=KIND_PROVIDER, status="ready").inc()
-            else:
-                metrics.reconcile_total.labels(kind=KIND_PROVIDER, result="failed").inc()
-                metrics.resource_status_total.labels(kind=KIND_PROVIDER, status="not_ready").inc()
-
-            # Update status directly via patch to avoid conflicts
-            patch.status.update(status_update)
+            self.update_resource_status(patch, meta, ready, status_data)
 
     def delete(
         self,
@@ -126,8 +108,7 @@ class ProviderHandler(BaseHandler):
         patch: kopf.Patch,
     ) -> None:
         """Handle Provider resource deletion."""
-        name = meta.get("name", "unknown")
-        self.logger.info(f"Provider {name} is being deleted")
+        self.log_info(meta, "Provider is being deleted", event="deletion", reason="Deletion")
         # No cleanup needed for provider itself
         self.remove_finalizer(meta, patch)
 

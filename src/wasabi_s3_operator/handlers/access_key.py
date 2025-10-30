@@ -24,9 +24,6 @@ from ..utils.errors import sanitize_exception
 from ..utils.events import (
     emit_access_key_created,
     emit_access_key_rotated,
-    emit_reconcile_failed,
-    emit_reconcile_started,
-    emit_validate_failed,
     emit_validate_succeeded,
 )
 from ..utils.secrets import (
@@ -61,10 +58,7 @@ class AccessKeyHandler(BaseHandler):
         with trace_span("reconcile_access_key", kind=KIND_ACCESS_KEY, attributes={"accesskey.name": name}):
             # Validate spec
             if not provider_name:
-                error_msg = "providerRef.name is required"
-                emit_validate_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, "providerRef.name is required")
 
             emit_validate_succeeded(meta)
 
@@ -83,15 +77,7 @@ class AccessKeyHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"Provider {provider_name} not found in namespace {provider_ns}"
-                    self.logger.error(error_msg)
-                    conditions = status.get("conditions", [])
-                    conditions = set_provider_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
-                    metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                    patch.status.update({
-                        "conditions": conditions,
-                        "observedGeneration": meta.get("generation", 0),
-                    })
+                    self.handle_provider_not_found(meta, status, patch, provider_name, provider_ns, error_msg)
                     return
                 raise
 
@@ -104,16 +90,7 @@ class AccessKeyHandler(BaseHandler):
 
             if not provider_ready:
                 error_msg = f"Provider {provider_name} is not ready"
-                self.logger.warning(error_msg)
-                conditions = status.get("conditions", [])
-                conditions = set_provider_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
-                metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
-                patch.status.update({
-                    "conditions": conditions,
-                    "observedGeneration": meta.get("generation", 0),
-                })
-                raise kopf.TemporaryError(error_msg)
+                self.handle_provider_not_ready(meta, status, patch, provider_name, error_msg)
 
             # Create provider client
             provider_spec = provider_obj.get("spec", {})
@@ -136,10 +113,9 @@ class AccessKeyHandler(BaseHandler):
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     error_msg = f"User {user_name} not found in namespace {user_ns}"
-                    self.logger.error(error_msg)
+                    self.log_error(meta, error_msg, reason="UserNotFound", user_name=user_name, user_ns=user_ns)
                     conditions = status.get("conditions", [])
                     conditions = set_provider_not_ready_condition(conditions, error_msg)
-                    emit_reconcile_failed(meta, error_msg)
                     metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
                     patch.status.update({
                         "conditions": conditions,
@@ -157,10 +133,9 @@ class AccessKeyHandler(BaseHandler):
 
             if not user_ready:
                 error_msg = f"User {user_name} is not ready"
-                self.logger.warning(error_msg)
+                self.log_warning(meta, error_msg, reason="UserNotReady", user_name=user_name)
                 conditions = status.get("conditions", [])
                 conditions = set_provider_not_ready_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
                 patch.status.update({
                     "conditions": conditions,
@@ -173,8 +148,7 @@ class AccessKeyHandler(BaseHandler):
             iam_user_name = user_spec.get("name")
             if not iam_user_name:
                 error_msg = f"User {user_name} does not have a valid IAM user name in spec"
-                self.logger.error(error_msg)
-                raise ValueError(error_msg)
+                self.handle_validation_error(meta, error_msg)
 
             # Check existing key and rotation
             existing_key_id = status.get("accessKeyId")
@@ -192,9 +166,11 @@ class AccessKeyHandler(BaseHandler):
                         next_rotate_time = datetime.fromisoformat(next_rotate_time_str.replace('Z', '+00:00'))
                         if datetime.now(timezone.utc) >= next_rotate_time:
                             needs_rotation = True
-                            self.logger.info(f"Access key {existing_key_id} needs rotation")
+                            self.log_info(meta, f"Access key {existing_key_id} needs rotation",
+                                         reason="RotationNeeded", access_key_id=existing_key_id)
                     except Exception as e:
-                        self.logger.warning(f"Failed to parse nextRotateTime: {e}")
+                        self.log_warning(meta, f"Failed to parse nextRotateTime: {e}",
+                                       reason="ParseError", error=str(e))
 
             if not existing_key_id:
                 self._create_access_key(
@@ -253,10 +229,12 @@ class AccessKeyHandler(BaseHandler):
                         ],
                     )
                     emit_access_key_created(meta, access_key_id)
-                    self.logger.info(f"Created access key {access_key_id} for user {iam_user_name}")
+                    self.log_info(meta, f"Created access key {access_key_id} for user {iam_user_name}",
+                                 reason="AccessKeyCreated", access_key_id=access_key_id, iam_user_name=iam_user_name)
                 except client.exceptions.ApiException as e:
                     if e.status == 409:
-                        self.logger.info(f"Secret {secret_name} already exists")
+                        self.log_info(meta, f"Secret {secret_name} already exists",
+                                     reason="SecretExists", secret_name=secret_name)
                     else:
                         raise
 
@@ -283,9 +261,8 @@ class AccessKeyHandler(BaseHandler):
                 patch.status.update(status_update)
             except Exception as e:
                 error_msg = f"Failed to create access key: {str(e)}"
-                self.logger.error(error_msg)
+                self.log_error(meta, error_msg, error=e, reason="CreationFailed", iam_user_name=iam_user_name)
                 conditions = set_creation_failed_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
                 patch.status.update({
                     "conditions": conditions,
@@ -308,7 +285,8 @@ class AccessKeyHandler(BaseHandler):
         """Rotate an existing access key."""
         with trace_span("rotate_access_key", kind=KIND_ACCESS_KEY):
             try:
-                self.logger.info(f"Rotating access key {existing_key_id} for user {iam_user_name}")
+                self.log_info(meta, f"Rotating access key {existing_key_id} for user {iam_user_name}",
+                             reason="RotationStarted", access_key_id=existing_key_id, iam_user_name=iam_user_name)
 
                 # Read current secret
                 secret_name = f"{name}-credentials"
@@ -325,7 +303,8 @@ class AccessKeyHandler(BaseHandler):
                 new_access_key_id = key_response.get("AccessKey", {}).get("AccessKeyId")
                 new_secret_access_key = key_response.get("AccessKey", {}).get("SecretAccessKey")
 
-                self.logger.info(f"Created new access key {new_access_key_id}")
+                self.log_info(meta, f"Created new access key {new_access_key_id}",
+                             reason="NewAccessKeyCreated", access_key_id=new_access_key_id, iam_user_name=iam_user_name)
 
                 # Create previous secret
                 rotated_at = datetime.now(timezone.utc).isoformat()
@@ -351,7 +330,8 @@ class AccessKeyHandler(BaseHandler):
                         }
                     ],
                 )
-                self.logger.info(f"Created previous secret {previous_secret_name}")
+                self.log_info(meta, f"Created previous secret {previous_secret_name}",
+                             reason="PreviousSecretCreated", previous_secret_name=previous_secret_name)
 
                 # Update main secret
                 update_access_key_secret(
@@ -361,7 +341,8 @@ class AccessKeyHandler(BaseHandler):
                     new_access_key_id,
                     new_secret_access_key,
                 )
-                self.logger.info(f"Updated secret {secret_name} with new credentials")
+                self.log_info(meta, f"Updated secret {secret_name} with new credentials",
+                             reason="SecretUpdated", secret_name=secret_name)
 
                 # Calculate next rotation time
                 last_rotate_time = rotated_at
@@ -383,9 +364,8 @@ class AccessKeyHandler(BaseHandler):
                 patch.status.update(status_update)
             except Exception as e:
                 error_msg = f"Failed to rotate access key: {str(e)}"
-                self.logger.error(error_msg)
+                self.log_error(meta, error_msg, error=e, reason="RotationFailed", access_key_id=existing_key_id, iam_user_name=iam_user_name)
                 conditions = set_rotation_failed_condition(conditions, error_msg)
-                emit_reconcile_failed(meta, error_msg)
                 metrics.reconcile_total.labels(kind=KIND_ACCESS_KEY, result="failed").inc()
                 patch.status.update({
                     "conditions": conditions,
@@ -407,7 +387,8 @@ class AccessKeyHandler(BaseHandler):
         conditions: list[dict[str, Any]],
     ) -> None:
         """Maintain existing access key (cleanup expired secrets)."""
-        self.logger.info(f"Access key {existing_key_id} already exists")
+        self.log_info(meta, f"Access key {existing_key_id} already exists",
+                     reason="AccessKeyExists", access_key_id=existing_key_id)
 
         if rotation_enabled:
             core_api = client.CoreV1Api()
@@ -430,11 +411,14 @@ class AccessKeyHandler(BaseHandler):
                         if expired_key_id:
                             try:
                                 provider_client.delete_access_key(iam_user_name, expired_key_id)
-                                self.logger.info(f"Deleted expired access key {expired_key_id} from Wasabi")
+                                self.log_info(meta, f"Deleted expired access key {expired_key_id} from Wasabi",
+                                             reason="ExpiredKeyDeleted", access_key_id=expired_key_id)
                             except Exception as e:
-                                self.logger.warning(f"Failed to delete expired access key {expired_key_id} from Wasabi: {e}")
+                                self.log_warning(meta, f"Failed to delete expired access key {expired_key_id} from Wasabi: {e}",
+                                               reason="ExpiredKeyDeleteFailed", access_key_id=expired_key_id, error=str(e))
                     except Exception as e:
-                        self.logger.warning(f"Failed to read secret {secret_info['name']} for cleanup: {e}")
+                        self.log_warning(meta, f"Failed to read secret {secret_info['name']} for cleanup: {e}",
+                                       reason="SecretReadFailed", secret_name=secret_info['name'], error=str(e))
 
                 # Cleanup expired secrets
                 deleted_secrets = cleanup_expired_previous_secrets(
@@ -445,9 +429,11 @@ class AccessKeyHandler(BaseHandler):
                 )
 
                 if deleted_secrets:
-                    self.logger.info(f"Deleted {len(deleted_secrets)} expired previous secrets: {deleted_secrets}")
+                    self.log_info(meta, f"Deleted {len(deleted_secrets)} expired previous secrets: {deleted_secrets}",
+                                 reason="ExpiredSecretsDeleted", count=len(deleted_secrets))
             except Exception as e:
-                self.logger.warning(f"Failed to cleanup expired previous secrets: {e}")
+                self.log_warning(meta, f"Failed to cleanup expired previous secrets: {e}",
+                               reason="CleanupFailed", error=str(e))
 
         conditions = set_ready_condition(conditions, True, f"Access key {existing_key_id} is ready")
 
@@ -479,7 +465,7 @@ class AccessKeyHandler(BaseHandler):
         namespace = meta.get("namespace", "default")
         access_key_id = status.get("accessKeyId")
 
-        self.logger.info(f"AccessKey {name} is being deleted")
+        self.log_info(meta, f"AccessKey {name} is being deleted", event="deletion", reason="Deletion", access_key_id=access_key_id or "unknown")
 
         if access_key_id:
             try:
@@ -507,23 +493,29 @@ class AccessKeyHandler(BaseHandler):
 
                                 if iam_user_name:
                                     provider_client.delete_access_key(iam_user_name, access_key_id)
-                                    self.logger.info(f"Deleted access key {access_key_id} for user {iam_user_name}")
+                                    self.log_info(meta, f"Deleted access key {access_key_id} for user {iam_user_name}",
+                                                 reason="AccessKeyDeleted", access_key_id=access_key_id, iam_user_name=iam_user_name)
                                 else:
-                                    self.logger.warning(f"User {user_name} does not have IAM user name in spec")
+                                    self.log_warning(meta, f"User {user_name} does not have IAM user name in spec",
+                                                    reason="InvalidUserSpec", user_name=user_name)
                             except client.exceptions.ApiException as e:
                                 if e.status == 404:
-                                    self.logger.warning(f"User {user_name} not found, cannot delete access key")
+                                    self.log_warning(meta, f"User {user_name} not found, cannot delete access key",
+                                                   reason="UserNotFound", user_name=user_name)
                                 else:
                                     raise
                         else:
-                            self.logger.warning(f"AccessKey {name} does not have userRef, cannot delete access key")
+                            self.log_warning(meta, f"AccessKey {name} does not have userRef, cannot delete access key",
+                                           reason="MissingUserRef", name=name)
                     except client.exceptions.ApiException as e:
                         if e.status == 404:
-                            self.logger.warning(f"Provider {provider_name} not found, cannot delete access key")
+                            self.log_warning(meta, f"Provider {provider_name} not found, cannot delete access key",
+                                           reason="ProviderNotFound", provider_name=provider_name)
                         else:
                             raise
             except Exception as e:
-                self.logger.error(f"Failed to delete access key {access_key_id}: {e}")
+                self.log_error(meta, f"Failed to delete access key {access_key_id}", 
+                              error=e, reason="DeletionFailed", access_key_id=access_key_id)
 
         self.remove_finalizer(meta, patch)
 
