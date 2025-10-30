@@ -1,6 +1,6 @@
 # Wasabi S3 Operator
 
-![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)
 [![License](https://img.shields.io/badge/license-Unlicense-lightgrey.svg)](LICENSE)
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/wasabi-s3-operator)](https://artifacthub.io/packages/search?repo=wasabi-s3-operator)
 
