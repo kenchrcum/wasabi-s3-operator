@@ -228,5 +228,3 @@ class TestAccessKeyEvents:
         assert key_id in call_args[1]["message"]
         assert "rotated" in call_args[1]["message"].lower()
         assert call_args[1]["type"] == "Normal"
-
-

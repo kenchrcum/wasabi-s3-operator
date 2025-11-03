@@ -204,5 +204,3 @@ class TestCacheTypes:
         # Note: with current implementation, we can't distinguish
         # between cached None and missing key, both return None
         assert result is None
-
-

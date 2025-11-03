@@ -419,5 +419,3 @@ class TestCleanupExpiredPreviousSecrets:
         result = cleanup_expired_previous_secrets(mock_api, "default", "test-key", 30)
 
         assert len(result) == 0
-
-
