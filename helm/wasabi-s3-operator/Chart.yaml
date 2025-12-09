@@ -2,8 +2,8 @@ apiVersion: v2
 name: wasabi-s3-operator
 description: A Helm chart for the Wasabi S3 Operator
 type: application
-version: 0.2.4
-appVersion: "0.2.4"
+version: 0.2.5
+appVersion: "0.2.5"
 keywords:
   - s3
   - wasabi
@@ -15,5 +15,6 @@ sources:
   - https://github.com/kenchrcum/wasabi-s3-operator
 maintainers:
   - name: kenchrcum
+    url: https://github.com/kenchrcum
 dependencies: []
 
